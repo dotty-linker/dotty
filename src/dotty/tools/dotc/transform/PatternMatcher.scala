@@ -1550,7 +1550,7 @@ class PatternMatcher extends MiniPhaseTransform with DenotTransformer {thisTrans
             else _.select(defn.Int_==).appliedTo(_)
 
           // `if (binder != null && $checkExpectedLength [== | >=] 0) then else zero`
-          (seqTree(binder).select(defn.Any_!=).appliedTo(Literal(Constant(null)))).select(defn.Boolean_&&).appliedTo(compareOp(checkExpectedLength, Literal(Constant(0))))
+          (seqTree(binder).select(defn.Object_ne).appliedTo(Literal(Constant(null)))).select(defn.Boolean_&&).appliedTo(compareOp(checkExpectedLength, Literal(Constant(0))))
         }
 
       def checkedLength: Option[Int] =
