@@ -9,7 +9,7 @@ import NameOps._
 import dotty.tools.dotc.ast.tpd
 import Symbols._
 import dotty.tools.dotc.core.Phases.Phase
-import dotty.tools.dotc.core.Types.{ConstantType,ExprType, MethodType, MethodicType, NoPrefix, NoType, TermRef, ThisType, Type}
+import dotty.tools.dotc.core.Types.{ConstantType, ExprType, MethodType, MethodicType, NamedType, NoPrefix, NoType, TermRef, ThisType, Type}
 import dotty.tools.dotc.transform.{Erasure, TreeTransforms}
 import dotty.tools.dotc.transform.TreeTransforms.{MiniPhaseTransform, TransformerInfo, TreeTransform}
 import dotty.tools.dotc.transform.SymUtils._
@@ -592,6 +592,7 @@ class Simplify extends MiniPhaseTransform with IdentityDenotTransformer {
   private def keepOnlySideEffects(t: Tree)(implicit ctx: Context): Tree = {
     t match {
       case t: Literal => EmptyTree
+      case t: This => EmptyTree
       case Typed(exp, tpe) =>
         keepOnlySideEffects(exp)
       case t @ If(cond, thenp, elsep) =>
