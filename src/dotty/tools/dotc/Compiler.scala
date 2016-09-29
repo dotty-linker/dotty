@@ -86,8 +86,9 @@ class Compiler {
            new Constructors,        // Collect initialization code in primary constructors
                                        // Note: constructors changes decls in transformTemplate, no InfoTransformers should be added after it
            new FunctionalInterfaces,// Rewrites closures to implement @specialized types of Functions.
-           new GetClass,           // Rewrites getClass calls on primitive types.
-           new DeadCodeElimination),
+           new GetClass           // Rewrites getClass calls on primitive types.
+           ,new DeadCodeElimination
+),
       List(new LambdaLift,          // Lifts out nested functions to class scope, storing free variables in environments
                                        // Note: in this mini-phase block scopes are incorrect. No phases that rely on scopes should be here
            new ElimStaticThis,      // Replace `this` references to static objects by global identifiers
