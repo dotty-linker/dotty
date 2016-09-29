@@ -693,6 +693,8 @@ class BuildCallGraph extends Phase {
           foldOver(x, tp)
       }
     }.apply(OuterTargs.empty, tp)
+   
+   private val soundlyHandleGlobals = false
 
   /**
     * @param mode see modes above
@@ -1083,7 +1085,8 @@ class BuildCallGraph extends Phase {
 
       println(s"\t Found ${reachableTypes.size} new instantiated types")
       val newReachableTypes = reachableTypes.newItems
-      newReachableTypes.foreach{ x =>
+      if (soundlyHandleGlobals) 
+       newReachableTypes.foreach{ x =>
         val clas = x.tp match {
           case t: ClosureType =>
             t.u.classSymbol.asClass
