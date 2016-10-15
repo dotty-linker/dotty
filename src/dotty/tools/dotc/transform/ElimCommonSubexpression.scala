@@ -15,15 +15,14 @@ import dotty.tools.dotc.core.Constants.Constant
 /** This phase performs Partial Redundancy Elimination (PRE) that
   * precomputes an expression into a new variable when it's used
   * several times within the same scope. It performs optimizations
-  * accross different scopes (branches and inner functions), and it is
+  * across different scopes (branches and inner functions), and it is
   * therefore more powerful than Common Subexpression Elimination (CSE).
   *
   * This optimization is applied for either vals, lazy vals or
   * expressions annotated with `Idempotent`. Such annotation is used to
   * ensure to the compiler that a concrete expression has no side effects.
   *
-  * @author jvican (Inspired by the work of @allanrenucci)
-  *
+  * @author jvican
   */
 class ElimCommonSubexpression extends MiniPhaseTransform {
 
@@ -63,7 +62,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
     sym.is(Flags.Method) && sym.owner.is(Flags.Method)
 
   override def transformDefDef(tree: tpd.DefDef)(
-      implicit ctx: Context, info: TransformerInfo): tpd.Tree = {
+      implicit ctx: Context,
+      info: TransformerInfo): tpd.Tree = {
     val ctx0: Context = ctx.withModeBits(Mode.FutureDefsOK)
     val result = {
       implicit val ctx: Context = ctx0
@@ -75,7 +75,11 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
           elimCommonSubexpression(ctx.withOwner(tree.symbol))
 
         val emptyTraversal = ListBuffer[List[IdempotentTree]]()
-        analyzer(tree, tree, tree, Set.empty[Symbol], State() -> emptyTraversal)
+        analyzer(tree,
+                 tree,
+                 tree,
+                 Set.empty[Symbol],
+                 State() -> emptyTraversal)
 
         val preOptimizer = nonInitOptimizer()
         val preOptimizedTree = new TreeMap() {
@@ -97,7 +101,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
             if (tree ne newDef) newDef
             else tree
           case _ =>
-            reportError("ElimCommonSubexpression didn't return a DefDef", newTree)
+            reportError("ElimCommonSubexpression didn't return a DefDef",
+                        newTree)
         }
       } else if (isInnerFunction(sym)) {
         val previousFuns = innerFunctionsOf.get(sym)
@@ -152,7 +157,10 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
     val True: Tree = Literal(Constant(true))
     val False: Tree = Literal(Constant(false))
     def translateCondToIfs(condTree: Tree): Tree = {
-      def toIf(cond: Tree, booleanOp: String, leftTree: Tree, rightTree: Tree) = {
+      def toIf(cond: Tree,
+               booleanOp: String,
+               leftTree: Tree,
+               rightTree: Tree) = {
         if (booleanOp == "$bar$bar")
           If(leftTree, True, rightTree)
         else if (booleanOp == "$amp$amp")
@@ -211,7 +219,11 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
           if (tree == topLevel) {
             val updatedMethods = visitedMethods + defDef.symbol
             val (state, traversal) =
-              analyzer(defDef.rhs, defDef, topLevel, updatedMethods, currentCtx)
+              analyzer(defDef.rhs,
+                       defDef,
+                       topLevel,
+                       updatedMethods,
+                       currentCtx)
             val optimizedState = state.retainOptimizableExpressions
             val newContext = optimizedState -> traversal
             orderedContexts += (newContext -> tree)
@@ -225,7 +237,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
           }
 
         case tryCatch @ Try(expr, cases, finalizer) =>
-          val newCtx = analyzer(expr, tryCatch, topLevel, visitedMethods, currentCtx)
+          val newCtx =
+            analyzer(expr, tryCatch, topLevel, visitedMethods, currentCtx)
           val (state, traversal) = newCtx
           val (_, diffedStats) = state.diff(currentCtx._1).get
 
@@ -235,7 +248,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
               getHostSymbolFrom(body, first)
           }
           val finalizerSymbol: Option[Symbol] = {
-            if (finalizer == EmptyTree) None else {
+            if (finalizer == EmptyTree) None
+            else {
               val first = getFirstInnerTree(finalizer)
               Some(getHostSymbolFrom(first, first))
             }
@@ -254,8 +268,10 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
 
         case branch @ If(rawCond, thenp, elsep) =>
           val cond = translateCondToIfs(rawCond)
-          val state = analyzer(cond, branch, topLevel, visitedMethods, currentCtx)
-          if (isUnitConstant(elsep)) state else {
+          val state =
+            analyzer(cond, branch, topLevel, visitedMethods, currentCtx)
+          if (isUnitConstant(elsep)) state
+          else {
             val toAnalyze = List(thenp, elsep)
             val analyzed = toAnalyze.map(
               analyzer(_, branch, topLevel, visitedMethods, state))
@@ -276,37 +292,46 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
 
               val initSymbol = getHostSymbolFrom(previous, tree)
 
-              val newState = allSubTrees.foldLeft(currentState) { (state, st) =>
-                val subTree = st.tree
-                val (counters, stats) = state.get
-                val currentCounter = counters.getOrElse(st, 0)
-                val (inits, refs) = stats.getOrElse(st, EmptyIdempotentInfo)
-                val newInits = if (inits.isEmpty) List(initSymbol) else inits
-                val newRefs = subTree :: refs
-                val newCounters = counters + (st -> (currentCounter + 1))
-                val newStats = stats + (st -> (newInits -> newRefs))
-                State(newCounters -> newStats)
+              val newState = allSubTrees.foldLeft(currentState) {
+                (state, st) =>
+                  val subTree = st.tree
+                  val (counters, stats) = state.get
+                  val currentCounter = counters.getOrElse(st, 0)
+                  val (inits, refs) = stats.getOrElse(st, EmptyIdempotentInfo)
+                  val newInits = if (inits.isEmpty) List(initSymbol) else inits
+                  val newRefs = subTree :: refs
+                  val newCounters = counters + (st -> (currentCounter + 1))
+                  val newStats = stats + (st -> (newInits -> newRefs))
+                  State(newCounters -> newStats)
               }
 
               val optimizedCtx = newState -> traversal
               if (funsOpt.isEmpty || funsOpt.get.isEmpty) optimizedCtx
-              else optimizeInnerFunctions(
-                tree, optimizedCtx, visitedMethods, topLevel, funsOpt.get)
+              else
+                optimizeInnerFunctions(tree,
+                                       optimizedCtx,
+                                       visitedMethods,
+                                       topLevel,
+                                       funsOpt.get)
 
             case _ =>
-
               if (funsOpt.isEmpty || funsOpt.get.isEmpty) currentCtx
-              else optimizeInnerFunctions(
-                tree, currentCtx, visitedMethods, topLevel, funsOpt.get)
+              else
+                optimizeInnerFunctions(tree,
+                                       currentCtx,
+                                       visitedMethods,
+                                       topLevel,
+                                       funsOpt.get)
           }
       }
     }
 
-    @inline def optimizeInnerFunctions(tree: Tree,
-                                       currentCtx: PREContext,
-                                       visitedMethods: Set[Symbol],
-                                       topLevel: Tree,
-                                       innerFuns: InnerFuns) = {
+    @inline
+    def optimizeInnerFunctions(tree: Tree,
+                               currentCtx: PREContext,
+                               visitedMethods: Set[Symbol],
+                               topLevel: Tree,
+                               innerFuns: InnerFuns) = {
 
       // Gather the invocations in post-order
       val invocations: List[DefDef] =
@@ -365,14 +390,17 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
     /** Decide the optimizable expressions in a family of idempotent trees,
       * that is, all the possible top and sub trees that are idempotent. */
     def pruneShorterTrees(counters: List[(IdempotentTree, Int)]) = {
-      if (counters.isEmpty) Nil else {
-        counters.foldLeft(List(counters.head)){ (acc, itreeCounter) =>
-          val (parent, parentCounter) = acc.head
-          val (itree, childCounter) = itreeCounter
-          if (parentCounter == childCounter &&
-              parent.tree.existsSubTree(_ == itree.tree)) acc
-          else itreeCounter :: acc
-        }.map(_._1)
+      if (counters.isEmpty) Nil
+      else {
+        counters
+          .foldLeft(List(counters.head)) { (acc, itreeCounter) =>
+            val (parent, parentCounter) = acc.head
+            val (itree, childCounter) = itreeCounter
+            if (parentCounter == childCounter &&
+                parent.tree.existsSubTree(_ == itree.tree)) acc
+            else itreeCounter :: acc
+          }
+          .map(_._1)
       }
     }
 
@@ -410,7 +438,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
             if (!optimizedCache.contains(itree)) {
               val (declaration, assignation, reference) = optimize(itree)
               val (inits, refs) = stats(itree)
-              val other = declarations.getOrElse(hostSymbol, List.empty[ValDef])
+              val other =
+                declarations.getOrElse(hostSymbol, List.empty[ValDef])
               val updatedDeclarations = declaration :: other
               declarations += hostSymbol -> updatedDeclarations
               val alreadyAssigned = mutable.HashSet.empty[Symbol]
@@ -420,7 +449,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                 if (!alreadyAssigned.contains(sym)) {
                   alreadyAssigned += sym
                   // Apply recursive optimizations in the rhs
-                  val updated = Assign(lhs, TreesUtils.replace(rhs, replacements))
+                  val updated =
+                    Assign(lhs, TreesUtils.replace(rhs, replacements))
                   registerAssignation(updated, sym)
                 }
               }
@@ -438,8 +468,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
       orderedContexts.foreach(p => optimizeContext(p._1, p._2))
       orderedContexts = null
 
-      {
-        tree => needsEntrypoint.get(tree) match {
+      { tree =>
+        needsEntrypoint.get(tree) match {
           case Some(entrypointInfo) =>
             needsEntrypoint -= tree
             val (entrypoint, pos) = entrypointInfo
@@ -479,58 +509,59 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
       * and substitute any original apperance of optimized trees by their refs. */
     val transformer: Transformer = () => {
       needsEntrypoint = null
-      (t: Tree) => t match {
-        case enclosing: ValOrDefDef =>
-          // Introduce declarations or assignations of optimized ValDefs
-          val enclosingSym = enclosing.symbol
-          val newTrees = if (declarations.contains(enclosingSym)) {
-            val result = declarations(enclosingSym).reverse
-            declarations -= enclosingSym
-            result
-          } else if (assignations.contains(enclosingSym)) {
-            val result = assignations(enclosingSym).reverse
-            assignations -= enclosingSym
-            result
-          } else List.empty[ValDef]
+      (t: Tree) =>
+        t match {
+          case enclosing: ValOrDefDef =>
+            // Introduce declarations or assignations of optimized ValDefs
+            val enclosingSym = enclosing.symbol
+            val newTrees = if (declarations.contains(enclosingSym)) {
+              val result = declarations(enclosingSym).reverse
+              declarations -= enclosingSym
+              result
+            } else if (assignations.contains(enclosingSym)) {
+              val result = assignations(enclosingSym).reverse
+              assignations -= enclosingSym
+              result
+            } else List.empty[ValDef]
 
-          val removeEntrypoint = entrypoints.contains(enclosingSym)
-          if (newTrees.nonEmpty) {
-            if (true) println(i"Introducing ${newTrees.map(_.show)}")
-            enclosing match {
-              case defDef: DefDef =>
-                val finalRhs = enclosing.rhs match {
-                  case blk @ Block(stats, expr) =>
-                    cpy.Block(blk)(newTrees ::: stats, expr)
-                  case singleRhs =>
-                    tpd.Block(newTrees, singleRhs)
-                }
-                val correctTypeRhs = finalRhs.tpe.widenIfUnstable
-                cpy.DefDef(defDef)(rhs = finalRhs.withType(correctTypeRhs))
-              case valDef: ValDef =>
-                if (removeEntrypoint) tpd.Thicket(newTrees)
-                else tpd.Thicket(newTrees ::: List(valDef))
+            val removeEntrypoint = entrypoints.contains(enclosingSym)
+            if (newTrees.nonEmpty) {
+              if (true) println(i"Introducing ${newTrees.map(_.show)}")
+              enclosing match {
+                case defDef: DefDef =>
+                  val finalRhs = enclosing.rhs match {
+                    case blk @ Block(stats, expr) =>
+                      cpy.Block(blk)(newTrees ::: stats, expr)
+                    case singleRhs =>
+                      tpd.Block(newTrees, singleRhs)
+                  }
+                  val correctTypeRhs = finalRhs.tpe.widenIfUnstable
+                  cpy.DefDef(defDef)(rhs = finalRhs.withType(correctTypeRhs))
+                case valDef: ValDef =>
+                  if (removeEntrypoint) tpd.Thicket(newTrees)
+                  else tpd.Thicket(newTrees ::: List(valDef))
+              }
+            } else if (removeEntrypoint) EmptyTree
+            else enclosing
+
+          case tree: Tree =>
+            val resultingTree = replacements.get(tree) match {
+              case Some(replacement) =>
+                optimizedTimes = optimizedTimes + 1
+                replacement
+              case None => tree
             }
-          } else if (removeEntrypoint) EmptyTree
-          else enclosing
-
-        case tree: Tree =>
-          val resultingTree = replacements.get(tree) match {
-            case Some(replacement) =>
-              optimizedTimes = optimizedTimes + 1
-              replacement
-            case None => tree
-          }
-          if (debug && (resultingTree ne tree))
-            println(s"Rewriting ${tree.show} to ${resultingTree.show}")
-          resultingTree
-      }
+            if (debug && (resultingTree ne tree))
+              println(s"Rewriting ${tree.show} to ${resultingTree.show}")
+            resultingTree
+        }
     }
 
     (analyzer _, preOptimizer, transformer)
   }
 
-  override def transformUnit(tree: tpd.Tree)
-                            (implicit ctx: Context, info: TransformerInfo) = {
+  override def transformUnit(tree: tpd.Tree)(implicit ctx: Context,
+                                             info: TransformerInfo) = {
     println(s"CSE removed $optimizedTimes expressions")
     tree
   }
@@ -595,10 +626,14 @@ object IdempotentTrees {
     if (isIdempotent(tree)) Some(new IdempotentTree(tree)) else None
 
   def markIdempotent(sym: Symbol)(implicit ctx: Context) =
-    ctx.idempotencyPhase.asInstanceOf[IdempotencyInference].markAsIdempotent(sym)
+    ctx.idempotencyPhase
+      .asInstanceOf[IdempotencyInference]
+      .markAsIdempotent(sym)
 
   def invalidMethodRef(sym: Symbol)(implicit ctx: Context): Boolean =
-    ctx.idempotencyPhase.asInstanceOf[IdempotencyInference].invalidMethodRef(sym)
+    ctx.idempotencyPhase
+      .asInstanceOf[IdempotencyInference]
+      .invalidMethodRef(sym)
 
   def isIdempotent(tree: Tree)(implicit ctx: Context): Boolean =
     ctx.idempotencyPhase.asInstanceOf[IdempotencyInference].isIdempotent(tree)
@@ -611,8 +646,9 @@ object IdempotentTrees {
                      canBranch: Boolean = false): List[IdempotentTree] = {
       tree match {
         // A top-level parameterless method may be invoked without `Apply`
-        case i: Ident if i.symbol.is(Flags.Method) &&
-            i.symbol.info.isParameterless && tree == t1.tree =>
+        case i: Ident
+            if i.symbol.is(Flags.Method) &&
+              i.symbol.info.isParameterless && tree == t1.tree =>
           List(IdempotentTrees(i))
 
         case Ident(_) | Literal(_) | This(_) | EmptyTree => Nil
@@ -651,8 +687,8 @@ object TreesUtils {
   import scala.collection.mutable
 
   /** Replace an **idempotent** subtree by a reference to another new tree. */
-  def replace(tree: Tree, replacements: mutable.HashMap[Tree, Tree])
-             (implicit ctx: Context) = {
+  def replace(tree: Tree, replacements: mutable.HashMap[Tree, Tree])(
+      implicit ctx: Context) = {
     def loop(tree: Tree, topLevel: Boolean = false): Tree = {
       tree match {
         case _: Tree if replacements.contains(tree) =>
@@ -670,8 +706,8 @@ object TreesUtils {
   }
 
   /** Delete a targeted already-known **idempotent** subtree. */
-  def delete(tree: Tree, replacements: mutable.HashMap[Tree, Tree])
-            (implicit ctx: Context) = {
+  def delete(tree: Tree, replacements: mutable.HashMap[Tree, Tree])(
+      implicit ctx: Context) = {
     def loop(tree: Tree): Unit = {
       tree match {
         case _: Tree if replacements.contains(tree) => replacements -= tree
@@ -690,8 +726,9 @@ object TreesUtils {
 
   /** Depth-first tree traversal that collects `DefDef`s from method invocations.
     * It ignores `TypeTree`s and follows the same semantics as `analyze`. */
-  def collectInvocations(tree: Tree, innerFuns: mutable.HashMap[Symbol, DefDef])
-                        (implicit ctx: Context): List[DefDef] = {
+  def collectInvocations(tree: Tree,
+                         innerFuns: mutable.HashMap[Symbol, DefDef])(
+      implicit ctx: Context): List[DefDef] = {
     val visited = mutable.HashSet[Symbol]()
 
     @inline def collectL(trees: List[Tree], acc: List[DefDef]): List[DefDef] =
@@ -701,8 +738,8 @@ object TreesUtils {
       case Ident(_) =>
         val sym = tree.symbol
         if (sym.is(Flags.Method) && !visited.contains(sym)) {
-            visited += sym
-            innerFuns.get(sym).toList
+          visited += sym
+          innerFuns.get(sym).toList
         } else Nil
 
       case Select(qualifier, name) =>
@@ -735,7 +772,7 @@ object TreesUtils {
       case Pair(left, right) => collect(right, collect(left, acc))
       case Typed(expr, tpt) => collect(expr, acc)
       case NamedArg(name, arg) => collect(arg, acc)
-      case Assign(_, rhs) =>collect(rhs, acc)
+      case Assign(_, rhs) => collect(rhs, acc)
 
       case Block(stats, expr) =>
         collect(expr, collectL(stats, acc))
@@ -788,9 +825,10 @@ object TreesUtils {
           .foreach(innerFuns -= _.symbol)
         acc
       case tree @ Template(constr, parents, self, _) =>
-        val templateInvocations = collectL(tree.body,
+        val templateInvocations = collectL(
+          tree.body,
           collect(self, collectL(parents, collect(constr, acc))))
-        templateInvocations.foreach (innerFuns -= _.symbol)
+        templateInvocations.foreach(innerFuns -= _.symbol)
         acc
 
       case _ => acc
@@ -831,27 +869,31 @@ case class State(get: (Counters, IdempotentStats)) extends AnyVal {
 
   /** Return the common idempotent trees in both states. */
   def intersect(other: State): State = {
-    if (this == other) this else {
+    if (this == other) this
+    else {
       val (cs, stats) = get
       val (cs2, stats2) = other.get
-
       val newCounters = cs.flatMap { pair =>
         val (key, value) = pair
-        cs2.get(key).map { value2 =>
-          List(key -> (
-            if (value == 1 && value2 == 1) 1
-            else value + value2)
-          )
-        }.getOrElse(Nil)
+        cs2
+          .get(key)
+          .map { value2 =>
+            List(
+              key -> (if (value == 1 && value2 == 1) 1
+                      else value + value2))
+          }
+          .getOrElse(Nil)
       }
-
       val newInfo = stats.flatMap { pair =>
         val (key, value) = pair
-        stats2.get(key).map { value2 =>
-          val mixedInits = value._1 ++ value2._1
-          val mixedRefs = value._2 ++ value2._2
-          List(key -> (mixedInits -> mixedRefs))
-        }.getOrElse(Nil)
+        stats2
+          .get(key)
+          .map { value2 =>
+            val mixedInits = value._1 ++ value2._1
+            val mixedRefs = value._2 ++ value2._2
+            List(key -> (mixedInits -> mixedRefs))
+          }
+          .getOrElse(Nil)
       }
 
       State(newCounters -> newInfo)
@@ -879,4 +921,3 @@ case class State(get: (Counters, IdempotentStats)) extends AnyVal {
       s"\n\nSTATS (${get._2.size}) :\n${get._2.mkString("\n")}\n===\n"
 
 }
-
