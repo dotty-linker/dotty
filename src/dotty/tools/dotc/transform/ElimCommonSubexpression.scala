@@ -583,7 +583,9 @@ object IdempotentTrees {
       t match {
         case EmptyTree => EmptyTree.hashCode()
         case _: This => t.symbol.hashCode()
-        case _: Super => t.symbol.hashCode()
+        case s: Super =>
+          // NOTE: super[M1] and super[M2] give the same symbol because mix is `TypeName`
+          mix(s.qual.hashCode(), s.mix.hashCode)
         case _: Ident => t.symbol.hashCode()
         case Literal(constant) =>
           if (constant.value == null) 0 else constant.value.hashCode()

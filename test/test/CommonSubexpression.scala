@@ -337,6 +337,26 @@ object CommonSubexpression {
     scala.math.Numeric.ByteIsIntegral
   }
 
+  def mixinsNotOptimize = {
+    class M1 {
+      def f = "M1::f"
+    }
+
+    trait M2 {
+      def f = "M2::f"
+    }
+
+    trait M3 {
+      def f = "M3::f"
+    }
+
+    class Host extends M1 with M2 with M3 {
+      override def f = super[M1].f + " " + super[M2].f + " " + super[M3].f
+    }
+
+    (new Host).f
+  }
+
   def main(args: Array[String]): Unit = {
     println("executing")
     assert(method1 == 1)
@@ -354,9 +374,10 @@ object CommonSubexpression {
     assert(method13 == 0)
     assert(method14 == 1)
     assert(method15 == 1)
-    method17
-    method18
+    // method17
+    //method18
     assert(method19 == 5)
+    assert(mixinsNotOptimize == "M1::f M2::f M3::f")
   }
 
 }
