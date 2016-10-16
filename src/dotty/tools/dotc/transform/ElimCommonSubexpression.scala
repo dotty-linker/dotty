@@ -108,7 +108,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
         val previousFuns = innerFunctionsOf.get(sym)
         innerFunctionsOf.get(sym.owner) match {
           case Some(currentFuns) =>
-            // Recursively add inner functions to outer owners
+            // Add inner functions to outer owners
             previousFuns.foreach(funs => currentFuns ++= funs)
             currentFuns += sym -> tree
           case None =>
@@ -270,7 +270,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
           val cond = translateCondToIfs(rawCond)
           val state =
             analyzer(cond, branch, topLevel, visitedMethods, currentCtx)
-          if (isUnitConstant(elsep)) state
+          if (isUnitConstant(thenp)) state
+          else if (isUnitConstant(elsep)) state
           else {
             val toAnalyze = List(thenp, elsep)
             val analyzed = toAnalyze.map(
@@ -282,46 +283,37 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
           }
 
         case tree: Tree =>
-          val funsOpt = innerFunctionsOf.get(topLevel.symbol)
-
-          IdempotentTrees.from(tree) match {
+          val ctx1 = IdempotentTrees.from(tree) match {
             case Some(idempotent) =>
               val allSubTrees = IdempotentTrees.allIdempotentTrees(idempotent)
               val (currentState, traversal) = currentCtx
               if (allSubTrees.nonEmpty) traversal += allSubTrees
-
-              val initSymbol = getHostSymbolFrom(previous, tree)
-
               val newState = allSubTrees.foldLeft(currentState) {
                 (state, st) =>
                   val subTree = st.tree
                   val (counters, stats) = state.get
                   val currentCounter = counters.getOrElse(st, 0)
                   val (inits, refs) = stats.getOrElse(st, EmptyIdempotentInfo)
-                  val newInits = if (inits.isEmpty) List(initSymbol) else inits
+                  val newInits =
+                    if (inits.nonEmpty) inits
+                    else List(getHostSymbolFrom(previous, tree))
                   val newRefs = subTree :: refs
                   val newCounters = counters + (st -> (currentCounter + 1))
                   val newStats = stats + (st -> (newInits -> newRefs))
                   State(newCounters -> newStats)
               }
 
-              val optimizedCtx = newState -> traversal
-              if (funsOpt.isEmpty || funsOpt.get.isEmpty) optimizedCtx
-              else
-                optimizeInnerFunctions(tree,
-                                       optimizedCtx,
-                                       visitedMethods,
-                                       topLevel,
-                                       funsOpt.get)
-
-            case _ =>
-              if (funsOpt.isEmpty || funsOpt.get.isEmpty) currentCtx
-              else
-                optimizeInnerFunctions(tree,
-                                       currentCtx,
-                                       visitedMethods,
-                                       topLevel,
-                                       funsOpt.get)
+              newState -> traversal
+            case _ => currentCtx
+          }
+          val funsOpt = innerFunctionsOf.get(topLevel.symbol)
+          if (funsOpt.isEmpty || funsOpt.get.isEmpty) ctx1
+          else {
+            optimizeInnerFunctions(tree,
+                                   ctx1,
+                                   visitedMethods,
+                                   topLevel,
+                                   funsOpt.get)
           }
       }
     }
@@ -845,8 +837,13 @@ object State {
 
   import tpd.Tree
 
+  /** 0 -> Unseen
+    * 1 -> Seen
+    * 2 -> Optimizable */
+  type Counted = Int
+
   /** Appearances of a given optimizable tree. */
-  type Counters = Map[IdempotentTree, Int]
+  type Counters = Map[IdempotentTree, Counted]
 
   /** Symbols where we store the initializers and references to an idem tree. */
   type IdempotentInfo = (List[Symbol], List[Tree])
@@ -858,7 +855,7 @@ object State {
     (List.empty[Symbol], List.empty[Tree])
 
   def apply(): State = State(
-    Map[IdempotentTree, Int]() -> Map[IdempotentTree, IdempotentInfo]()
+    Map[IdempotentTree, Counted]() -> Map[IdempotentTree, IdempotentInfo]()
   )
 
 }
@@ -877,25 +874,24 @@ case class State(get: (Counters, IdempotentStats)) extends AnyVal {
       val (cs2, stats2) = other.get
       val newCounters = cs.flatMap { pair =>
         val (key, value) = pair
-        cs2
-          .get(key)
-          .map { value2 =>
-            List(
-              key -> (if (value == 1 && value2 == 1) 1
-                      else value + value2))
-          }
-          .getOrElse(Nil)
+        val value2 = cs2.getOrElse(key, 0)
+        // INVARIANT: `cs` never contains values with 0, stop if so
+        if (value2 == 0 || value == 0) Nil
+        else {
+          val occurrences = if (value == 1 && value2 == 1) 1 else value
+          List(key -> occurrences)
+        }
       }
       val newInfo = stats.flatMap { pair =>
         val (key, value) = pair
-        stats2
-          .get(key)
-          .map { value2 =>
-            val mixedInits = value._1 ++ value2._1
-            val mixedRefs = value._2 ++ value2._2
-            List(key -> (mixedInits -> mixedRefs))
-          }
-          .getOrElse(Nil)
+        val value2 = stats2.getOrElse(key, EmptyIdempotentInfo)
+        // INVARIANT: stats2 can never be empty, stop if so
+        if (value2._1.isEmpty) Nil
+        else {
+          val mixedInits = value._1 ++ value2._1
+          val mixedRefs = value._2 ++ value2._2
+          List(key -> (mixedInits -> mixedRefs))
+        }
       }
 
       State(newCounters -> newInfo)
@@ -904,11 +900,14 @@ case class State(get: (Counters, IdempotentStats)) extends AnyVal {
 
   /** Return the idempotent trees not present in the [[other]] state. */
   def diff(other: State): State = {
-    val (cs, stats) = get
-    val (cs2, stats2) = other.get
-    val commonCounters = cs.filter(kv => !cs2.contains(kv._1))
-    val commonInfo = stats.filter(kv => !stats2.contains(kv._1))
-    State(commonCounters -> commonInfo)
+    if (this == other) this
+    else {
+      val (cs, stats) = get
+      val (cs2, stats2) = other.get
+      val commonCounters = cs.filter(kv => !cs2.contains(kv._1))
+      val commonInfo = stats.filter(kv => !stats2.contains(kv._1))
+      State(commonCounters -> commonInfo)
+    }
   }
 
   /** Retain the trees that are optimizable (appeared more than once). */
