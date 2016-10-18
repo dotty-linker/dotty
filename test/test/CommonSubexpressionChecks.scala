@@ -497,7 +497,6 @@ class A {
       foo
     }
 
-
     assert(count == 5)
     count = 0
   }
@@ -511,7 +510,7 @@ class A {
   def test38b(): Unit = {
     val c = 1
     @Idempotent def foo: Int = idem1
-    @Idempotent def sum(a: Int, b: Int) = { a + b + c + c}
+    @Idempotent def sum(a: Int, b: Int) = { a + b + c + c }
     sum(c + c, foo + foo)
     foo + foo
   }
@@ -542,14 +541,14 @@ object Test {
     test3()
     test4()
     test5()
-    test6() // inner functions
-    test6bis()
+/*    test6() // inner functions
+    test6bis()*/
     test7()
     test8(new A)
     test9()
-    test10()
+/*    test10()
     test11()
-    test11bis()
+    test11bis()*/
     test12()
     test13()
     test14()
