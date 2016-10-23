@@ -1,6 +1,8 @@
 package dotty.tools.dotc
 package transform
 
+import java.util
+
 import TreeTransforms._
 import core._
 import Symbols._
@@ -38,24 +40,26 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
   override def runsAfter =
     Set(classOf[ElimByName], classOf[IdempotencyInference])
 
-  type Analyzer = (Tree, Tree, Tree, Set[Symbol], OContext,
-                   Boolean) => OContext
+  type Analyzer = (Tree, Tree, Tree, Set[Symbol], OContext, Boolean) => OContext
   type PreOptimizer = () => (Tree => Tree)
   type Transformer = () => (Tree => Tree)
   type Optimization = (Context) => (Analyzer, PreOptimizer, Transformer)
 
   import collection.mutable.ListBuffer
+
   type Traversal = ListBuffer[List[IdempotentTree]]
-  type OContext = (State, Traversal)
+  type OContext = (State, (Traversal, Traversal))
 
   /** Represents the new declaration, assignation and reference. */
   type Optimized = (ValDef, Assign, Tree)
 
   def reportError(msg: String, tree: Tree)(implicit ctx: Context) = {
-    ctx.error(s"$tree $msg", tree.pos); tree
+    ctx.error(s"$tree $msg", tree.pos)
+    tree
   }
 
   import collection.mutable
+
   type InnerFuns = mutable.HashMap[Symbol, DefDef]
   var innerFunctionsOf = mutable.HashMap[Symbol, InnerFuns]()
 
@@ -63,8 +67,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
     sym.is(Flags.Method) && sym.owner.is(Flags.Method)
 
   override def transformDefDef(tree: tpd.DefDef)(
-      implicit ctx: Context,
-      info: TransformerInfo): tpd.Tree = {
+    implicit ctx: Context,
+    info: TransformerInfo): tpd.Tree = {
     val ctx0: Context = ctx.withModeBits(Mode.FutureDefsOK)
     val result = {
       implicit val ctx: Context = ctx0
@@ -75,13 +79,14 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
         val (analyzer, nonInitOptimizer, nonInitTransformer) =
           elimCommonSubexpression(ctx.withOwner(tree.symbol))
 
-        val emptyTraversal = ListBuffer[List[IdempotentTree]]()
+        val preEmptyTraversal = ListBuffer[List[IdempotentTree]]()
+        val postEmptyTraversal = ListBuffer[List[IdempotentTree]]()
         analyzer(tree,
-                 tree,
-                 tree,
-                 Set.empty[Symbol],
-                 State() -> emptyTraversal,
-                 false)
+          tree,
+          tree,
+          Set.empty[Symbol],
+          State() -> (preEmptyTraversal -> postEmptyTraversal),
+          false)
 
         val preOptimizer = nonInitOptimizer()
         val preOptimizedTree = new TreeMap() {
@@ -104,7 +109,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
             else tree
           case _ =>
             reportError("ElimCommonSubexpression didn't return a DefDef",
-                        newTree)
+              newTree)
         }
       } else if (isInnerFunction(sym)) {
         val previousFuns = innerFunctionsOf.get(sym)
@@ -235,7 +240,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
               analyzer(subTree, block, topLevel, methodCache, noctx, skipInner)
           }
 
-        case tryCatch @ Try(expr, cases, finalizer) =>
+        case tryCatch@Try(expr, cases, finalizer) =>
           val newCtx =
             analyzer(expr, tryCatch, topLevel, methodCache, octx, skipInner)
           val (state, traversal) = newCtx
@@ -265,7 +270,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
           val (counters, stats) = state.get
           State(counters -> (stats ++ updatedDiffStats)) -> traversal
 
-        case branch @ If(rawCond, thenp, elsep) =>
+        case branch@If(rawCond, thenp, elsep) =>
           val cond = translateCondToIfs(rawCond)
           val state =
             analyzer(cond, branch, topLevel, methodCache, octx, skipInner)
@@ -283,20 +288,25 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
             else {
               // If it appears in thenp, it appears in elsep
               followInnerFunctions(thenp,
-                                   commonCtx,
-                                   methodCache,
-                                   topLevel,
-                                   false)
+                commonCtx,
+                methodCache,
+                topLevel,
+                skipInner = false)
             }
           }
 
         case tree: Tree =>
           val ctx1 = IdempotentTrees.from(tree) match {
             case Some(idempotent) =>
-              val allSubTrees = IdempotentTrees.allIdempotentTrees(idempotent)
-              val (currentState, traversal) = octx
-              if (allSubTrees.nonEmpty) traversal += allSubTrees
-              val newState = allSubTrees.foldLeft(currentState) {
+              val (preTraversal, postTraversal) = IdempotentTrees.traverseTrees(idempotent)
+              val (currentState, traversals) = octx
+              if (preTraversal.nonEmpty) {
+                val (t1, t2) = traversals
+                // Traversals are list buffers
+                t1 += preTraversal
+                t2 += postTraversal
+              }
+              val newState = preTraversal.foldLeft(currentState) {
                 (state, st) =>
                   val subTree = st.tree
                   val (counters, stats) = state.get
@@ -311,7 +321,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                   State(newCounters -> newStats)
               }
 
-              newState -> traversal
+              newState -> traversals
             case _ => octx
           }
           if (skipInner) ctx1
@@ -343,7 +353,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                                skipInner: Boolean) = {
       // Gather the invocations in post-order
       val invocations: List[DefDef] =
-        TreesUtils.collectInvocations(tree, innerFuns)
+      TreesUtils.collectInvocations(tree, innerFuns)
 
       // Analyze inner functions from the ctx in the first call-site
       invocations.foldLeft(currentCtx) { (octx, defDef) =>
@@ -368,7 +378,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
       * location in which an optimized expression is to be initialized. We
       * generate symbols for trees that do not have (like ifs, blocks, etc). */
     def generateEntrypoint: ValDef =
-      tpd.SyntheticValDef(ctx.freshName("entrypoint$$").toTermName, EmptyTree)
+    tpd.SyntheticValDef(ctx.freshName("entrypoint$$").toTermName, EmptyTree)
 
     /** Register an entrypoint and add it to the global state. */
     def registerEntrypoint(at: Tree, pos: EntrypointPosition): Symbol = {
@@ -402,7 +412,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
             val (parent, parentCounter) = acc.head
             val (itree, childCounter) = itreeCounter
             if (parentCounter == childCounter &&
-                parent.tree.existsSubTree(_ == itree.tree)) acc
+              parent.tree.existsSubTree(_ == itree.tree)) acc
             else itreeCounter :: acc
           }
           .map(_._1)
@@ -430,15 +440,20 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
     val preOptimizer: PreOptimizer = () => {
       def optimizeContext(context: OContext, host: Tree): Unit = {
         val hostSymbol = host.symbol
-        val (state, traversal) = context
+        val (state, (preTraversal, postTraversal)) = context
         val (counters, stats) = state.get
         val optimizedCache = mutable.HashSet[IdempotentTree]()
+        val deservesOptimization = mutable.HashSet[IdempotentTree]()
 
-        traversal.foreach { forest =>
+        // TODO(jvican): Remove inefficient pruning with parent analysis
+        preTraversal.foreach { forest =>
           val cs = forest.iterator.map(t => t -> counters.getOrElse(t, 0))
           val candidates = cs.filter(_._2 > 1).toList
-          val pruned = pruneShorterTrees(candidates)
+          deservesOptimization ++= pruneShorterTrees(candidates)
+        }
 
+        postTraversal.foreach { forest =>
+          val pruned = forest.filter(t => deservesOptimization.contains(t))
           pruned.foreach { itree =>
             if (!optimizedCache.contains(itree)) {
               val (declaration, assignation, reference) = optimize(itree)
@@ -499,7 +514,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                   case Thicket(trees) =>
                     // Expand tree if thicket is in expr position inside block
                     cpy.Block(tree)(stats = stats ::: trees.init,
-                                    expr = trees.last)
+                      expr = trees.last)
                   case _ => tree
                 }
               case _ => tree
@@ -535,7 +550,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
               enclosing match {
                 case defDef: DefDef =>
                   val finalRhs = enclosing.rhs match {
-                    case blk @ Block(stats, expr) =>
+                    case blk@Block(stats, expr) =>
                       cpy.Block(blk)(newTrees ::: stats, expr)
                     case singleRhs =>
                       tpd.Block(newTrees, singleRhs)
@@ -627,7 +642,7 @@ object IdempotentTrees {
 
   // Never call directly without having checked that it's indeed idempotent
   def apply(tree: Tree)(implicit ctx: Context): IdempotentTree =
-    new IdempotentTree(tree)
+  new IdempotentTree(tree)
 
   def from(tree: Tree)(implicit ctx: Context): Option[IdempotentTree] =
     if (isIdempotent(tree)) Some(new IdempotentTree(tree)) else None
@@ -647,40 +662,61 @@ object IdempotentTrees {
 
   /** Collects all the valid idempotent sub trees, including the original tree.
     * NOTE: If you modify it, change also the semantics of `isIdempotent`. */
-  def allIdempotentTrees(t1: IdempotentTree)(
-      implicit ctx: Context): List[IdempotentTree] = {
-    def collectValid(tree: Tree,
-                     canBranch: Boolean = false): List[IdempotentTree] = {
+  def traverseTrees(t1: IdempotentTree)(implicit
+                                        ctx: Context): (List[IdempotentTree], List[IdempotentTree]) = {
+    def collectValid(tree: Tree, canBranch: Boolean = false)
+    : (List[IdempotentTree], List[IdempotentTree]) = {
       tree match {
         // A top-level parameterless method may be invoked without `Apply`
         case i: Ident
-            if i.symbol.is(Flags.Method) &&
-              i.symbol.info.isParameterless && tree == t1.tree =>
-          List(IdempotentTrees(i))
+          if i.symbol.is(Flags.Method) &&
+            i.symbol.info.isParameterless && tree == t1.tree =>
+          val itree = List(IdempotentTrees(i))
+          itree -> itree
 
-        case Ident(_) | Literal(_) | This(_) | EmptyTree => Nil
+        case Ident(_) | Literal(_) | This(_) | EmptyTree => Nil -> Nil
 
         case Super(_, _) =>
-          if (!canBranch) List(IdempotentTrees(tree)) else Nil
+          if (!canBranch) {
+            val itree = List(IdempotentTrees(tree))
+            itree -> itree
+          } else Nil -> Nil
 
         case Select(qual, _) =>
-          if (!canBranch) collectValid(qual, canBranch = true)
-          else IdempotentTrees(tree) :: collectValid(qual, canBranch = true)
+          val traversalsSubTrees = collectValid(qual, canBranch = true)
+          if (!canBranch) traversalsSubTrees
+          else {
+            val (preTraversal, postTraversal) = traversalsSubTrees
+            val itree = IdempotentTrees(tree)
+            (itree :: preTraversal, postTraversal ::: List(itree))
+          }
 
         case TypeApply(fn, _) =>
-          if (canBranch)
-            IdempotentTrees(tree) :: collectValid(fn)
-          else collectValid(fn)
+          val traversalsSubTrees = collectValid(fn)
+          if (canBranch) {
+            val (preTraversal, postTraversal) = traversalsSubTrees
+            val itree = IdempotentTrees(tree)
+            (itree :: preTraversal, postTraversal ::: List(itree))
+          } else traversalsSubTrees
 
         case Apply(fn, args) =>
-          val collected = collectValid(fn, canBranch = false)
-          val prefix =
-            if (canBranch) IdempotentTrees(tree) :: collected else collected
-          val cargs = args.map(a => collectValid(a, canBranch = true))
-          val branched = if (cargs.nonEmpty) cargs.reduce(_ ++ _) else Nil
-          prefix ::: branched
+          val traversalsFn = collectValid(fn, canBranch = false)
+          val collectedArgs = args.map(a => collectValid(a, canBranch = true))
+          val e = List.empty[IdempotentTree]
+          val traversalArgs = collectedArgs.foldLeft(e -> e) { (acc, ts) =>
+            val (preTraversal1, postTraversal1) = acc
+            val (preTraversal2, postTraversal2) = ts
+            (preTraversal1 ++ preTraversal2) -> (postTraversal1 ++ postTraversal2)
+          }
+          val preTraversal = traversalsFn._1 ++ traversalArgs._1
+          val postTraversal = traversalsFn._2 ++ traversalArgs._2
+          if (canBranch) {
+            val itree = IdempotentTrees(tree)
+            (itree :: preTraversal, postTraversal ::: List(itree))
+          } else preTraversal -> postTraversal
 
-        case _ => Nil // Impossible case, tree must be non idempotent
+        case _ =>
+          sys.error(s"INVARIANT BROKEN: wrong idempotent tree $tree")
       }
     }
     collectValid(t1.tree, canBranch = true)
@@ -695,7 +731,7 @@ object TreesUtils {
 
   /** Replace an **idempotent** subtree by a reference to another new tree. */
   def replace(tree: Tree, replacements: mutable.HashMap[Tree, Tree])(
-      implicit ctx: Context) = {
+    implicit ctx: Context) = {
     def loop(tree: Tree, topLevel: Boolean = false): Tree = {
       tree match {
         case _: Tree if replacements.contains(tree) =>
@@ -714,7 +750,7 @@ object TreesUtils {
 
   /** Delete a targeted already-known **idempotent** subtree. */
   def delete(tree: Tree, replacements: mutable.HashMap[Tree, Tree])(
-      implicit ctx: Context) = {
+    implicit ctx: Context) = {
     def loop(tree: Tree): Unit = {
       tree match {
         case _: Tree if replacements.contains(tree) => replacements -= tree
@@ -735,7 +771,7 @@ object TreesUtils {
     * It ignores `TypeTree`s and follows the same semantics as `analyze`. */
   def collectInvocations(tree: Tree,
                          innerFuns: mutable.HashMap[Symbol, DefDef])(
-      implicit ctx: Context): List[DefDef] = {
+                          implicit ctx: Context): List[DefDef] = {
     val visited = mutable.HashSet[Symbol]()
 
     @inline def collectL(trees: List[Tree], acc: List[DefDef]): List[DefDef] =
@@ -831,7 +867,7 @@ object TreesUtils {
         collect(finalizer, collectL(handlers, collect(block, acc)))
           .foreach(innerFuns -= _.symbol)
         acc
-      case tree @ Template(constr, parents, self, _) =>
+      case tree@Template(constr, parents, self, _) =>
         val defsInvokedInTemplate = collectL(
           tree.body,
           collect(self, collectL(parents, collect(constr, acc))))

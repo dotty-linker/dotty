@@ -118,7 +118,7 @@ class A {
     val b = idem2()
     val c = idem1
 
-    assert(count == 4)
+    assert(count == 3)
     count = 0
   }
 
@@ -546,10 +546,11 @@ object Test {
     test7()
     test8(new A)
     test9()
+    test10()
 /*    test10()
     test11()
     test11bis()*/
-    test12()
+    //test12()
     test13()
     test14()
     test15()
