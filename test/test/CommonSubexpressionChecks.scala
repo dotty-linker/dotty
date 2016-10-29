@@ -151,7 +151,7 @@ class A {
     val a = idem4(impure, idem1)
     val b = idem1
 
-    assert(count == 3)
+    assert(count == 2)
     count = 0
   }
 
@@ -547,10 +547,10 @@ object Test {
     test8(new A)
     test9()
     test10()
-/*    test10()
+    test10()
     test11()
-    test11bis()*/
-    //test12()
+    test11bis()
+    test12()
     test13()
     test14()
     test15()

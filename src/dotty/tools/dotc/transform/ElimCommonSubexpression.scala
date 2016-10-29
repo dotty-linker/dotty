@@ -322,7 +322,11 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
               }
 
               newState -> traversals
-            case _ => octx
+            case _ =>
+              val subTrees = IdempotentTrees.unfoldArgs(tree)
+              subTrees.foldLeft(octx) { (noctx, subTree) =>
+                analyzer(subTree, prev, topLevel, methodCache, noctx, skipInner)
+              }
           }
           if (skipInner) ctx1
           else
@@ -469,8 +473,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                 if (!alreadyAssigned.contains(sym)) {
                   alreadyAssigned += sym
                   // Apply recursive optimizations in the rhs
-                  val updated =
-                    Assign(lhs, TreesUtils.replace(rhs, replacements))
+                  val updated = Assign(lhs, TreesUtils.replace(rhs, replacements))
                   registerAssignation(updated, sym)
                 }
               }
@@ -659,6 +662,15 @@ object IdempotentTrees {
 
   def isIdempotent(tree: Tree)(implicit ctx: Context): Boolean =
     ctx.idempotencyPhase.asInstanceOf[IdempotencyInference].isIdempotent(tree)
+
+  def unfoldArgs(tree: Tree): List[Tree] = {
+    tree match {
+      case Select(qual, _) => unfoldArgs(qual)
+      case TypeApply(_, targs) => targs
+      case Apply(_, args) => args
+      case _ => Nil
+    }
+  }
 
   /** Collects all the valid idempotent sub trees, including the original tree.
     * NOTE: If you modify it, change also the semantics of `isIdempotent`. */
