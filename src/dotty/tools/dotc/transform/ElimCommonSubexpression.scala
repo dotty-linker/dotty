@@ -40,7 +40,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
 
   type Analyzer = (Tree, Tree, Tree, Set[Symbol], OContext, Boolean) => OContext
   type PreOptimizer = () => Unit
-  type Transformer = () => (Tree => Tree)
+  type Transformer = (Tree => Tree)
   type Optimization = (Context) => (Analyzer, PreOptimizer, Transformer)
 
   import collection.mutable.ListBuffer
@@ -74,7 +74,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
       val sym = tree.symbol
       // TODO: Should we not optimize labels as well?
       if (!isInnerFunction(sym) && !sym.is(Flags.Label)) {
-        val (analyzer, optimizeExpressions, nonInitTransformer) =
+        val (analyzer, optimizeExpressions, transformer) =
           elimCommonSubexpression(ctx.withOwner(tree.symbol))
 
         val preEmptyTraversal = ListBuffer[List[IdempotentTree]]()
@@ -87,7 +87,6 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                  false)
 
         optimizeExpressions()
-        val transformer = nonInitTransformer()
         val newTree = new TreeMap() {
           override def transform(tree: tpd.Tree)(implicit ctx: Context) =
             transformer(super.transform(tree))
@@ -296,7 +295,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
 
               newState -> traversals
             case _ =>
-/*              val unfoldedTrees = IdempotentTrees.unfoldArgs(tree)
+              val unfoldedTrees = IdempotentTrees.unfoldArgs(tree)
               unfoldedTrees.foldLeft(octx) { (noctx, nextTree) =>
                 analyzer(nextTree,
                          prev,
@@ -304,8 +303,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                          methodCache,
                          noctx,
                          skipInner)
-              }*/
-              octx
+              }
           }
           if (skipInner) ctx1
           else
@@ -441,48 +439,41 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
       * in which it was found, add the assignations in the correct position
       * (removing entrypoints if necessary, since they are not useful anymore)
       * and substitute any original appearance of optimized trees by their refs. */
-    val transformer: Transformer = () => {
-      (t: Tree) =>
-        t match {
-          case enclosing: ValOrDefDef =>
-            // Introduce declarations of optimized expressions
-            val enclosingSym = enclosing.symbol
-            val newTrees = if (declarations.contains(enclosingSym)) {
-              val result = declarations(enclosingSym).reverse
-              declarations -= enclosingSym
-              result
-            } else List.empty[ValDef]
+    val transformer: Transformer = {
+      case enclosing: DefDef =>
+        // Introduce declarations of optimized expressions
+        val enclosingSym = enclosing.symbol
+        val newTrees = if (declarations.contains(enclosingSym)) {
+          val result = declarations(enclosingSym).reverse
+          declarations -= enclosingSym
+          result
+        } else List.empty[ValDef]
 
-            if (newTrees.nonEmpty) {
-              if (true) println(i"Introducing ${newTrees.map(_.show)}")
-              enclosing match {
-                case defDef: DefDef =>
-                  val finalRhs = enclosing.rhs match {
-                    case blk @ Block(stats, expr) =>
-                      cpy.Block(blk)(newTrees ::: stats, expr)
-                    case singleRhs =>
-                      tpd.Block(newTrees, singleRhs)
-                  }
-                  val correctTypeRhs = finalRhs.tpe.widenIfUnstable
-                  cpy.DefDef(defDef)(rhs = finalRhs.withType(correctTypeRhs))
-/*                case valDef: ValDef =>
-                  // This ValDef is an entrypoint
-                  if (removeEntrypoint) tpd.Thicket(newTrees)
-                  else tpd.Thicket(newTrees ::: List(valDef))*/
+        if (newTrees.nonEmpty) {
+          if (true) println(i"Introducing ${newTrees.map(_.show)}")
+          enclosing match {
+            case defDef: DefDef =>
+              val finalRhs = enclosing.rhs match {
+                case blk@Block(stats, expr) =>
+                  cpy.Block(blk)(newTrees ::: stats, expr)
+                case singleRhs =>
+                  tpd.Block(newTrees, singleRhs)
               }
-            } else enclosing
+              val correctTypeRhs = finalRhs.tpe.widenIfUnstable
+              cpy.DefDef(defDef)(rhs = finalRhs.withType(correctTypeRhs))
+          }
+        } else enclosing
 
-          case tree: Tree =>
-            val resultingTree = replacements.get(tree) match {
-              case Some(replacement) =>
-                optimizedTimes = optimizedTimes + 1
-                replacement
-              case None => tree
-            }
-            if (debug && (resultingTree ne tree))
-              println(s"Rewriting ${tree.show} to ${resultingTree.show}")
-            resultingTree
+      case tree: Tree =>
+        val resultingTree = replacements.get(tree) match {
+          case Some(replacement) =>
+            optimizedTimes = optimizedTimes + 1
+            replacement
+          case None => tree
         }
+        if (debug && (resultingTree ne tree))
+          println(s"Rewriting ${tree.show} to ${resultingTree.show}")
+        resultingTree
     }
 
     (analyzer _, preOptimizer, transformer)
