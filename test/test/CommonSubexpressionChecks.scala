@@ -94,6 +94,37 @@ class A {
     count = 0
   }
 
+  def test7b(): Unit = {
+    val a = idem3(idem1)
+    val b = idem1
+    if (a == 1) idem3(idem1)
+    else idem3(idem1)
+
+    assert(count == 2)
+    count = 0
+  }
+
+  def test7c(): Unit = {
+    val a = idem4(idem1, idem1)
+    val b = idem1
+    if (a == 1) idem4(idem1, idem1)
+    else idem4(idem1, idem1)
+
+    assert(count == 2)
+    count = 0
+  }
+
+  val d = 2
+  def test7d(): Unit = {
+    if (d == 1) idem4(idem1, idem1)
+    else idem4(idem1, idem1)
+    val a = idem4(idem1, idem1)
+    val b = idem1
+
+    assert(count == 2)
+    count = 0
+  }
+
   def test8(a: A): Unit = {
     val i = a.idem1
     val i2 = idem1
@@ -161,7 +192,8 @@ class A {
     val a = impure.idem3(idem1)
     val c = idem3(idem1)
 
-    assert(count == 3)
+    assert(impure.count == 0)
+    assert(count == 2)
     count = 0
   }
 
@@ -527,6 +559,19 @@ class A {
     foo(2)
   }
 
+  @Idempotent def sum(a: Int, b: Int) = {
+    println(s"SUMANDO $a y $b")
+    a + b
+  }
+  def sum2(a: Int, b: Int) = {
+    println(s"SUMANDO $a y $b")
+    a + b
+  }
+  def owned(): Unit = {
+    sum(sum2(2, 1), sum(1, 1))
+    val he = sum(1,1)
+  }
+
 }
 
 object Test {
@@ -536,6 +581,7 @@ object Test {
     val a = new A
     import a._
 
+    owned()
     test1()
     test2()
     test3()
