@@ -587,8 +587,8 @@ object Test {
     test3()
     test4()
     test5()
-/*    test6() // inner functions
-    test6bis()*/
+    test6() // inner functions
+    test6bis()
     test7()
     test8(new A)
     test9()

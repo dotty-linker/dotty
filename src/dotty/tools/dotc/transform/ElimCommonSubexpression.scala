@@ -38,7 +38,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
   override def runsAfter =
     Set(classOf[ElimByName], classOf[IdempotencyInference])
 
-  type Analyzer = (Tree, Tree, Tree, Set[Symbol], OContext, Boolean) => OContext
+  type Analyzer = (Tree, Tree, Tree, Set[Symbol], OContext, Boolean, Boolean) => OContext
   type PreOptimizer = () => Unit
   type Transformer = (Tree => Tree)
   type Optimization = (Context) => (Analyzer, PreOptimizer, Transformer)
@@ -84,6 +84,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                  tree,
                  Set.empty[Symbol],
                  State() -> (preEmptyTraversal -> postEmptyTraversal),
+                 false,
                  false)
 
         optimizeExpressions()
@@ -194,31 +195,35 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                  topLevel: Tree,
                  methodCache: Set[Symbol],
                  octx: OContext,
-                 skipInner: Boolean): OContext = {
+                 skipInner: Boolean,
+                 skipUnseen: Boolean): OContext = {
       tree match {
         case valDef: ValDef =>
-          analyzer(valDef.rhs, valDef, topLevel, methodCache, octx, skipInner)
+          analyzer(valDef.rhs, valDef, topLevel, methodCache, octx, skipInner, skipUnseen)
 
         case defDef: DefDef =>
           if (tree == topLevel) {
             val newCache = methodCache + defDef.symbol
             val (state, traversal) =
-              analyzer(defDef.rhs, defDef, topLevel, newCache, octx, skipInner)
+              analyzer(defDef.rhs, defDef, topLevel, newCache, octx, skipInner, skipUnseen)
             val optimizedState = state.retainOptimizableExpressions
             val newContext = optimizedState -> traversal
             orderedContexts += (newContext -> tree)
             newContext
           } else octx
 
+        case closure: Closure =>
+          analyzer(closure.meth, closure, topLevel, methodCache, octx, skipInner, true)
+
         case block: Block =>
           (block.stats ::: List(block.expr)).foldLeft(octx) {
             (noctx, subTree) =>
-              analyzer(subTree, block, topLevel, methodCache, noctx, skipInner)
+              analyzer(subTree, block, topLevel, methodCache, noctx, skipInner, skipUnseen)
           }
 
         case tryCatch @ Try(expr, cases, finalizer) =>
           val newCtx =
-            analyzer(expr, tryCatch, topLevel, methodCache, octx, skipInner)
+            analyzer(expr, tryCatch, topLevel, methodCache, octx, skipInner, skipUnseen)
           val (state, traversal) = newCtx
           val (_, diffedStats) = state.diff(octx._1).get
 
@@ -245,13 +250,13 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
         case branch @ If(rawCond, thenp, elsep) =>
           val cond = translateCondToIfs(rawCond)
           val state =
-            analyzer(cond, branch, topLevel, methodCache, octx, skipInner)
+            analyzer(cond, branch, topLevel, methodCache, octx, skipInner, skipUnseen)
           if (isUnitConstant(thenp)) state
           else if (isUnitConstant(elsep)) state
           else {
             val toAnalyze = List(thenp, elsep)
             val analyzed = toAnalyze.map(
-              analyzer(_, branch, topLevel, methodCache, state, true))
+              analyzer(_, branch, topLevel, methodCache, state, true, skipUnseen))
             val commonCtx = analyzed.reduceLeft { (accContext, newContext) =>
               // Traversal list is mutable, choose whichever
               accContext._1.intersect(newContext._1) -> newContext._2
@@ -263,7 +268,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                                    commonCtx,
                                    methodCache,
                                    topLevel,
-                                   skipInner = false)
+                                   skipInner = false,
+                                   skipUnseen)
             }
           }
 
@@ -284,13 +290,16 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                   val subTree = st.tree
                   val (counters, stats) = state.get
                   val currentCounter = counters.getOrElse(st, 0)
-                  val (inits, refs) = stats.getOrElse(st, EmptyIdempotentInfo)
-                  val (newInits, newRefs) =
-                    if (inits.nonEmpty) inits -> (subTree :: refs)
-                    else List(subTree) -> refs
-                  val newCounters = counters + (st -> (currentCounter + 1))
-                  val newStats = stats + (st -> (newInits -> newRefs))
-                  State(newCounters -> newStats)
+                  if (skipUnseen && currentCounter == 0) state
+                  else {
+                    val (inits, refs) = stats.getOrElse(st, EmptyIdempotentInfo)
+                    val (newInits, newRefs) =
+                      if (inits.nonEmpty) inits -> (subTree :: refs)
+                      else List(subTree) -> refs
+                    val newCounters = counters + (st -> (currentCounter + 1))
+                    val newStats = stats + (st -> (newInits -> newRefs))
+                    State(newCounters -> newStats)
+                  }
               }
 
               newState -> traversals
@@ -302,12 +311,13 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                          topLevel,
                          methodCache,
                          noctx,
-                         skipInner)
+                         skipInner,
+                         skipUnseen)
               }
           }
           if (skipInner) ctx1
           else
-            followInnerFunctions(tree, ctx1, methodCache, topLevel, skipInner)
+            followInnerFunctions(tree, ctx1, methodCache, topLevel, skipInner, skipUnseen)
       }
     }
 
@@ -316,12 +326,13 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                              ctx1: OContext,
                              cache: Set[Symbol],
                              topLevel: Tree,
-                             skipInner: Boolean) = {
+                             skipInner: Boolean,
+                             skipUnseen: Boolean) = {
       val funsOpt = innerFunctionsOf.get(topLevel.symbol)
       if (funsOpt.isEmpty || funsOpt.get.isEmpty) ctx1
       else {
         val funs = funsOpt.get
-        optimizeInnerFunctions(tree, ctx1, cache, topLevel, funs, skipInner)
+        optimizeInnerFunctions(tree, ctx1, cache, topLevel, funs, skipInner, skipUnseen)
       }
     }
 
@@ -331,7 +342,8 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
                                visitedMethods: Set[Symbol],
                                topLevel: Tree,
                                innerFuns: InnerFuns,
-                               skipInner: Boolean) = {
+                               skipInner: Boolean,
+                               skipUnseen: Boolean) = {
       // Gather the invocations in post-order
       val invocations: List[DefDef] =
         TreesUtils.collectInvocations(tree, innerFuns)
@@ -342,7 +354,7 @@ class ElimCommonSubexpression extends MiniPhaseTransform {
         // Make sure we don't follow recursive methods
         val updatedOctx = if (!visitedMethods.contains(defSymbol)) {
           val visited = visitedMethods + defSymbol
-          analyzer(defDef.rhs, defDef, topLevel, visited, octx, skipInner)
+          analyzer(defDef.rhs, defDef, topLevel, visited, octx, skipInner, skipUnseen)
         } else octx
         innerFuns -= defDef.symbol
         updatedOctx
