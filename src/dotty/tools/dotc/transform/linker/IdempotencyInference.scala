@@ -76,7 +76,7 @@ class IdempotencyInference
       collectedCalls.foreach {
         case (defn, calls) =>
           if (!assumedIdempotent(defn) && !inferredIdempotent(defn)) {
-            if (calls.forall(call => isIdempotentRef(call))) {
+            if (calls.nonEmpty && calls.forall(call => isIdempotentRef(call))) {
               if ((!defn.symbol.isConstructor) ||
                 (defn.symbol.owner.isValueClass ||
                   defn.symbol.owner.is(Flags.Module))) {
@@ -107,7 +107,11 @@ class IdempotencyInference
   def isIdempotentRef(sym: Symbol)(implicit ctx: Context): Boolean = {
     if ((sym hasAnnotation defn.IdempotentAnnot) || inferredIdempotent(sym))
       true // @Idempotent
-    else assumedIdempotent(sym)
+    else {
+      val isIdempotent = assumedIdempotent(sym)
+      if (isIdempotent) inferredIdempotent += sym
+      isIdempotent
+    }
   }
 
   private def assumedIdempotent(sym: Symbol)(implicit ctx: Context): Boolean = {
@@ -148,7 +152,6 @@ class IdempotencyInference
 
         case TypeApply(fn, _) =>
           if (pendingArgsList > 0) false
-          else if (isTopLevel) loop(fn, pendingArgsList)
           else loop(fn, pendingArgsList)
 
         case Apply(fn, args) =>

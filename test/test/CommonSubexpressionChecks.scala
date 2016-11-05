@@ -203,7 +203,7 @@ class A {
     val a = impure + idem1
     val b = impure + idem1
 
-    assert(count == 2)
+    assert(count == 1)
     count = 0
   }
 
@@ -222,7 +222,7 @@ class A {
     val a = idem4(3 + impure, idem1)
     val b = idem1
 
-    assert(count == 3)
+    assert(count == 2)
     count = 0
   }
 
@@ -241,7 +241,7 @@ class A {
     val b = idem1
     val c = idem2()
 
-    assert(count == 4)
+    assert(count == 3)
     count = 0
   }
 
@@ -298,7 +298,7 @@ class A {
     if (cond) idem1 else idem1
     val a = idem1
 
-    assert(count == 2)
+    assert(count == 1)
     count = 0
   }
 
