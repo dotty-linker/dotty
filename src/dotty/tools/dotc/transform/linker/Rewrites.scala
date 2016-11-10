@@ -124,6 +124,7 @@ class Rewrites extends MiniPhaseTransform { thisTransform =>
       def traverse(tree: tpd.Tree)(implicit ctx: Context): Unit =
         tree match {
           case t: Apply => traverseChildren(tree)
+          case t: TypeApply => traverse(t.fun)
           case Block(Nil, exp) => traverse(exp)
           case t @ Block(List(fn: DefDef), c: Closure) =>
             unsupported(s"No closures in patterns yet. Sorry. Use function-arguments instead.")
