@@ -248,6 +248,12 @@ class Rewrites extends MiniPhaseTransform { thisTransform =>
           case _ =>
             abort
         }
+        case TypeApply(fn, targs) => seb(subpat) match {
+          case TypeApply(selfn, seltargs) =>
+            loop(fn, selfn)
+            targs.zip(seltargs).foreach(x => x._1.tpe =:= x._2.tpe)
+          case _ => abort
+        }
         case Block(List(fn: DefDef), c: Closure) => seb(subpat) match {
           case subpat: Ident if (subpat.symbol.owner == pattern.symbol && subpat.symbol.is(Flags.Param)) => // new binding
             bind(subpat.symbol, subtree, ctx.owner)
