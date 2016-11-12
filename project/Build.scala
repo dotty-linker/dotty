@@ -20,7 +20,7 @@ object DottyBuild extends Build {
 
   val agentOptions = List(
     // "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005"
-    "-agentpath:/opt/yourkit/bin/linux-x86-64/libyjpagent.so=alloc_object_counting"
+    //"-agentpath:/opt/yourkit/bin/linux-x86-64/libyjpagent.so=alloc_object_counting"
     // "-agentpath:/Applications/YourKit_Java_Profiler_2015_build_15052.app/Contents/Resources/bin/mac/libyjpagent.jnilib",
     // "-XX:+HeapDumpOnOutOfMemoryError", "-Xmx1g", "-Xss2m"
   )
