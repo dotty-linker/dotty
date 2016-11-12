@@ -20,7 +20,7 @@ object DottyBuild extends Build {
 
   val agentOptions = List(
     // "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005"
-    // "-agentpath:/home/dark/opt/yjp-2013-build-13072/bin/linux-x86-64/libyjpagent.so"
+    "-agentpath:/opt/yourkit/bin/linux-x86-64/libyjpagent.so=alloc_object_counting"
     // "-agentpath:/Applications/YourKit_Java_Profiler_2015_build_15052.app/Contents/Resources/bin/mac/libyjpagent.jnilib",
     // "-XX:+HeapDumpOnOutOfMemoryError", "-Xmx1g", "-Xss2m"
   )
@@ -124,7 +124,7 @@ object DottyBuild extends Build {
         // command line arguments get passed to the last task in an aliased
         // sequence (see partest alias below), so this works.
         val args = Def.spaceDelimited("<arg>").parsed
-        val jars = Seq((packageBin in Compile).value.getAbsolutePath) ++
+        val jars = Seq(file("./dotty.jar").getAbsolutePath) ++
             getJarPaths(partestDeps.value, ivyPaths.value.ivyHome)
         val dottyJars  = "-dottyJars " + (jars.length + 1) + " dotty.jar" + " " + jars.mkString(" ")
         // Provide the jars required on the classpath of run tests
@@ -170,14 +170,14 @@ object DottyBuild extends Build {
       parallelExecution in Test := false,
 
       // http://grokbase.com/t/gg/simple-build-tool/135ke5y90p/sbt-setting-jvm-boot-paramaters-for-scala
-      javaOptions <++= (dependencyClasspath in Runtime, packageBin in Compile) map { (attList, bin) =>
+      javaOptions <++= (dependencyClasspath in Runtime) map { (attList) =>
         // put the Scala {library, reflect} in the classpath
         val path = for {
           file <- attList.map(_.data)
           path = file.getAbsolutePath
         } yield "-Xbootclasspath/p:" + path
         // dotty itself needs to be in the bootclasspath
-        val fullpath = ("-Xbootclasspath/a:" + bin) :: path.toList
+        val fullpath = ("-Xbootclasspath/a:" + "./dotty.jar") :: path.toList
         // System.err.println("BOOTPATH: " + fullpath)
 
         val travis_build = // propagate if this is a travis build
@@ -198,7 +198,7 @@ object DottyBuild extends Build {
     ).
     settings(
       addCommandAlias("partest",                   ";test:package;package;test:runMain dotc.build;lockPartestFile;test:test;runPartestRunner") ++
-      addCommandAlias("partest-only",              ";test:package;package;test:runMain dotc.build;lockPartestFile;test:test-only dotc.tests;runPartestRunner") ++
+      addCommandAlias("partest-only",              ";test:package;package;test:runMain dotc.build;lockPartestFile;test:test-only dotc.tests") ++
       addCommandAlias("partest-only-no-bootstrap", ";test:package;package;                        lockPartestFile;test:test-only dotc.tests;runPartestRunner")
     ).
     settings(publishing)
@@ -323,7 +323,7 @@ object DottyInjectedPlugin extends AutoPlugin {
       parallelExecution in Test := false,
 
       // http://grokbase.com/t/gg/simple-build-tool/135ke5y90p/sbt-setting-jvm-boot-paramaters-for-scala
-      javaOptions <++= (dependencyClasspath in Runtime, packageBin in Compile) map { (attList, bin) =>
+      javaOptions <++= (dependencyClasspath in Runtime) map { attList =>
         // put the Scala {library, reflect, compiler} in the classpath
         val path = for {
           file <- attList.map(_.data)
@@ -331,7 +331,7 @@ object DottyInjectedPlugin extends AutoPlugin {
           prefix = if (path.endsWith(".jar")) "p" else "a"
         } yield "-Xbootclasspath/" + prefix + ":" + path
         // dotty itself needs to be in the bootclasspath
-        val fullpath = ("-Xbootclasspath/a:" + bin) :: path.toList
+        val fullpath = ("-Xbootclasspath/a:" + "./dotty.jar") :: path.toList
         // System.err.println("BOOTPATH: " + fullpath)
 
         val travis_build = // propagate if this is a travis build
@@ -490,12 +490,20 @@ object DottyInjectedPlugin extends AutoPlugin {
 
           def doCompile(sourcesArgs: List[String]): Unit = {
             val run = (runner in compile).value
+            println("CLASSPATH")
+            println(compilerCp.mkString(":"))
+            println("CP STR")
+            val caca = "-classpath" :: cpStr ::
+              "-d" :: classesDirectory.getAbsolutePath() ::
+              options ++:
+                sourcesArgs
+            println(caca.mkString(" "))
             run.run("dotty.tools.dotc.Main", compilerCp,
-                "-classpath" :: cpStr ::
+              "-classpath" :: cpStr ::
                 "-d" :: classesDirectory.getAbsolutePath() ::
                 options ++:
-                sourcesArgs,
-                patchedLogger) foreach sys.error
+                  sourcesArgs,
+              patchedLogger) foreach sys.error
           }
 
           // Work around the Windows limitation on command line length.

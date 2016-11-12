@@ -1,6 +1,7 @@
 package test
 
 import scala.annotation.Idempotent
+import scala.collection.mutable
 
 class A {
   var count = 0
@@ -314,6 +315,16 @@ class A {
     count = 0
   }
 
+  def test25b(any: Any): Unit = {
+    any match {
+      case _: String => idem1
+      case _ => idem1
+    }
+    val a = idem1
+    assert(count == 1)
+    count = 0
+  }
+
   def test26(): Unit = {
     @Idempotent def idem = {
       count += 1
@@ -335,7 +346,7 @@ class A {
       idem1
     }
 
-    assert(count == 2)
+    assert(count == 1)
     count = 0
   }
 
@@ -353,6 +364,7 @@ class A {
   }
 
   def test27cNotOptimized(): Unit = {
+    c = true
     if (c) bar else ()
     idem1
     def bar = {
@@ -360,7 +372,7 @@ class A {
       idem1
     }
 
-    assert(count == 1)
+    assert(count == 2)
     count = 0
   }
 
@@ -472,7 +484,7 @@ class A {
     val a = idem5(impure)(idem1)
     val b = idem1
 
-    assert(count == 3)
+    assert(count == 2)
     count = 0
   }
 
@@ -511,12 +523,33 @@ class A {
       foo
     }
 
-    assert(count == 2)
+    assert(count == 1)
     count = 0
   }
 
   def test37(): Unit = {
     def foo = idem1 + idem2()
+    val a = idem2()
+
+    {
+      idem1
+      foo
+    }
+
+    {
+      idem1
+      foo
+    }
+
+    assert(count == 2)
+    count = 0
+  }
+
+  def test37b(): Unit = {
+    def foo = {
+      println("PREVENT IDEM INFERENCE")
+      idem1 + idem2()
+    }
     val a = idem2()
 
     {
@@ -572,7 +605,17 @@ class A {
     val he = sum(1,1)
   }
 
+  implicit def wrapIntArray(xs: Array[Int]): mutable.WrappedArray[Int] =
+    if (xs ne null) mutable.WrappedArray.make[Int](xs) else null
+
+  @Idempotent def takesIntSeq(seq: Seq[Int]) = seq.length
+
+  def optimizeImplicits(): Unit = {
+    takesIntSeq(Seq(1,2,3))
+    takesIntSeq(Seq(1,2,3))
+  }
 }
+
 
 object Test {
 
@@ -612,12 +655,13 @@ object Test {
     test24(false)
     test25("Hello") // inner functions
     test25(1)       // inner functions
+    test25b(1)
     test26()
     test27()
     test28() // inner functions
     test29() // inner functions
     test30()
-    test31()
+    //test31()
     test32()
     test33()
     test34NotOptimizable()

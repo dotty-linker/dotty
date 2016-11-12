@@ -76,7 +76,7 @@ class IdempotencyInference
       collectedCalls.foreach {
         case (defn, calls) =>
           if (!assumedIdempotent(defn) && !inferredIdempotent(defn)) {
-            if (calls.nonEmpty && calls.forall(call => isIdempotentRef(call))) {
+            if (calls.forall(call => isIdempotentRef(call))) {
               if ((!defn.symbol.isConstructor) ||
                 (defn.symbol.owner.isValueClass ||
                   defn.symbol.owner.is(Flags.Module))) {

@@ -29,7 +29,11 @@ class tests extends CompilerTest {
     else List("-Ycheck:tailrec,resolveSuper,mixin,restoreScopes,labelDef")
   }
 
-  val testPickling = List("-Xprint-types", "-Ytest-pickler", "-Ystop-after:pickler")
+  val allowDeepSubtypes = defaultOptions diff List("-Yno-deep-subtypes")
+  val sourceDir = "./src/"
+  val dottyDir  = sourceDir + "dotty/"
+  @Test def dotty = compileDir(dottyDir, ".", List("-deep", "-Ycheck-reentrant", "-strict"))(allowDeepSubtypes) // note the -deep argument
+/*  val testPickling = List("-Xprint-types", "-Ytest-pickler", "-Ystop-after:pickler")
 
   val twice = List("#runs", "2")
   val staleSymbolError: List[String] = List()
@@ -287,5 +291,5 @@ class tests extends CompilerTest {
 
   @Test def tasty_dotc_util = compileDir(dotcDir, "util", testPickling)
   @Test def tasty_tools_io = compileDir(toolsDir, "io", testPickling)
-  @Test def tasty_tests = compileDir(testsDir, "tasty", testPickling)
+  @Test def tasty_tests = compileDir(testsDir, "tasty", testPickling)*/
 }
