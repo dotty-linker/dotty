@@ -20,7 +20,7 @@ object DottyBuild extends Build {
 
   val agentOptions = List(
     // "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005"
-    //"-agentpath:/opt/yourkit/bin/linux-x86-64/libyjpagent.so=alloc_object_counting"
+    // "-agentpath:/home/dark/opt/yjp-2013-build-13072/bin/linux-x86-64/libyjpagent.so"
     // "-agentpath:/Applications/YourKit_Java_Profiler_2015_build_15052.app/Contents/Resources/bin/mac/libyjpagent.jnilib",
     // "-XX:+HeapDumpOnOutOfMemoryError", "-Xmx1g", "-Xss2m"
   )
@@ -93,14 +93,14 @@ object DottyBuild extends Build {
 
       // get libraries onboard
       partestDeps := Seq(scalaCompiler,
-                         "org.scala-lang" % "scala-reflect" % scalaVersion.value,
-                         "org.scala-lang" % "scala-library" % scalaVersion.value % "test"),
+        "org.scala-lang" % "scala-reflect" % scalaVersion.value,
+        "org.scala-lang" % "scala-library" % scalaVersion.value % "test"),
       libraryDependencies ++= partestDeps.value,
       libraryDependencies ++= Seq("org.scala-lang.modules" %% "scala-xml" % "1.0.1",
-                                  "org.scala-lang.modules" %% "scala-partest" % "1.0.11" % "test",
-                                  "com.novocode" % "junit-interface" % "0.11" % "test",
-                                  "jline" % "jline" % "2.12",
-                                  "com.typesafe.sbt" % "sbt-interface" % sbtVersion.value),
+        "org.scala-lang.modules" %% "scala-partest" % "1.0.11" % "test",
+        "com.novocode" % "junit-interface" % "0.11" % "test",
+        "jline" % "jline" % "2.12",
+        "com.typesafe.sbt" % "sbt-interface" % sbtVersion.value),
       // enable improved incremental compilation algorithm
       incOptions := incOptions.value.withNameHashing(true),
 
@@ -124,8 +124,8 @@ object DottyBuild extends Build {
         // command line arguments get passed to the last task in an aliased
         // sequence (see partest alias below), so this works.
         val args = Def.spaceDelimited("<arg>").parsed
-        val jars = Seq(file("./dotty.jar").getAbsolutePath) ++
-            getJarPaths(partestDeps.value, ivyPaths.value.ivyHome)
+        val jars = Seq((packageBin in Compile).value.getAbsolutePath) ++
+          getJarPaths(partestDeps.value, ivyPaths.value.ivyHome)
         val dottyJars  = "-dottyJars " + (jars.length + 1) + " dotty.jar" + " " + jars.mkString(" ")
         // Provide the jars required on the classpath of run tests
         runTask(Test, "dotty.partest.DPConsoleRunner", dottyJars + " " + args.mkString(" "))
@@ -146,14 +146,14 @@ object DottyBuild extends Build {
 
         val report = updateClassifiers.value
         val scalaJSIRSourcesJar = report.select(
-            configuration = Set("sourcedeps"),
-            module = (_: ModuleID).name.startsWith("scalajs-ir_"),
-            artifact = artifactFilter(`type` = "src")).headOption.getOrElse {
+          configuration = Set("sourcedeps"),
+          module = (_: ModuleID).name.startsWith("scalajs-ir_"),
+          artifact = artifactFilter(`type` = "src")).headOption.getOrElse {
           sys.error(s"Could not fetch scalajs-ir sources")
         }
 
         FileFunction.cached(cacheDir / s"fetchScalaJSIRSource",
-            FilesInfo.lastModified, FilesInfo.exists) { dependencies =>
+          FilesInfo.lastModified, FilesInfo.exists) { dependencies =>
           s.log.info(s"Unpacking scalajs-ir sources to $trgDir...")
           if (trgDir.exists)
             IO.delete(trgDir)
@@ -170,14 +170,14 @@ object DottyBuild extends Build {
       parallelExecution in Test := false,
 
       // http://grokbase.com/t/gg/simple-build-tool/135ke5y90p/sbt-setting-jvm-boot-paramaters-for-scala
-      javaOptions <++= (dependencyClasspath in Runtime) map { (attList) =>
+      javaOptions <++= (dependencyClasspath in Runtime, packageBin in Compile) map { (attList, bin) =>
         // put the Scala {library, reflect} in the classpath
         val path = for {
           file <- attList.map(_.data)
           path = file.getAbsolutePath
         } yield "-Xbootclasspath/p:" + path
         // dotty itself needs to be in the bootclasspath
-        val fullpath = ("-Xbootclasspath/a:" + "./dotty.jar") :: path.toList
+        val fullpath = ("-Xbootclasspath/a:" + bin) :: path.toList
         // System.err.println("BOOTPATH: " + fullpath)
 
         val travis_build = // propagate if this is a travis build
@@ -188,7 +188,7 @@ object DottyBuild extends Build {
 
         val tuning =
           if (sys.props.isDefinedAt("Oshort"))
-            // Optimize for short-running applications, see https://github.com/lampepfl/dotty/issues/222
+          // Optimize for short-running applications, see https://github.com/lampepfl/dotty/issues/222
             List("-XX:+TieredCompilation", "-XX:TieredStopAtLevel=1")
           else
             List()
@@ -198,8 +198,8 @@ object DottyBuild extends Build {
     ).
     settings(
       addCommandAlias("partest",                   ";test:package;package;test:runMain dotc.build;lockPartestFile;test:test;runPartestRunner") ++
-      addCommandAlias("partest-only",              ";test:package;package;test:runMain dotc.build;lockPartestFile;test:test-only dotc.tests;runPartestRunner") ++
-      addCommandAlias("partest-only-no-bootstrap", ";test:package;package;                        lockPartestFile;test:test-only dotc.tests;runPartestRunner")
+        addCommandAlias("partest-only",              ";test:package;package;test:runMain dotc.build;lockPartestFile;test:test-only dotc.tests;runPartestRunner") ++
+        addCommandAlias("partest-only-no-bootstrap", ";test:package;package;                        lockPartestFile;test:test-only dotc.tests;runPartestRunner")
     ).
     settings(publishing)
 
@@ -265,14 +265,14 @@ object DottyInjectedPlugin extends AutoPlugin {
 
 
   /** A sandbox to play with the Scala.js back-end of dotty.
-   *
-   *  This sandbox is compiled with dotty with support for Scala.js. It can be
-   *  used like any regular Scala.js project. In particular, `fastOptJS` will
-   *  produce a .js file, and `run` will run the JavaScript code with a JS VM.
-   *
-   *  Simply running `dotty/run -scalajs` without this sandbox is not very
-   *  useful, as that would not provide the linker and JS runners.
-   */
+    *
+    *  This sandbox is compiled with dotty with support for Scala.js. It can be
+    *  used like any regular Scala.js project. In particular, `fastOptJS` will
+    *  produce a .js file, and `run` will run the JavaScript code with a JS VM.
+    *
+    *  Simply running `dotty/run -scalajs` without this sandbox is not very
+    *  useful, as that would not provide the linker and JS runners.
+    */
   lazy val sjsSandbox = project.in(file("sandbox/scalajs")).
     enablePlugins(ScalaJSPlugin).
     settings(
@@ -323,7 +323,7 @@ object DottyInjectedPlugin extends AutoPlugin {
       parallelExecution in Test := false,
 
       // http://grokbase.com/t/gg/simple-build-tool/135ke5y90p/sbt-setting-jvm-boot-paramaters-for-scala
-      javaOptions <++= (dependencyClasspath in Runtime) map { attList =>
+      javaOptions <++= (dependencyClasspath in Runtime, packageBin in Compile) map { (attList, bin) =>
         // put the Scala {library, reflect, compiler} in the classpath
         val path = for {
           file <- attList.map(_.data)
@@ -331,7 +331,7 @@ object DottyInjectedPlugin extends AutoPlugin {
           prefix = if (path.endsWith(".jar")) "p" else "a"
         } yield "-Xbootclasspath/" + prefix + ":" + path
         // dotty itself needs to be in the bootclasspath
-        val fullpath = ("-Xbootclasspath/a:" + "./dotty.jar") :: path.toList
+        val fullpath = ("-Xbootclasspath/a:" + bin) :: path.toList
         // System.err.println("BOOTPATH: " + fullpath)
 
         val travis_build = // propagate if this is a travis build
@@ -345,68 +345,68 @@ object DottyInjectedPlugin extends AutoPlugin {
       }
     )
 
-   lazy val `scala-library` = project
+  lazy val `scala-library` = project
     .settings(
       libraryDependencies += "org.scala-lang" % "scala-library" % scalaVersion.value
     )
     .settings(publishing)
 
-   lazy val publishing = Seq(
-     publishMavenStyle := true,
-     publishArtifact := true,
-     isSnapshot := version.value.contains("SNAPSHOT"),
-     publishTo := {
-       val nexus = "https://oss.sonatype.org/"
-       if (isSnapshot.value)
-         Some("snapshots" at nexus + "content/repositories/snapshots")
-       else
-         Some("releases"  at nexus + "service/local/staging/deploy/maven2")
-     },
-     publishArtifact in Test := false,
-     homepage := Some(url("https://github.com/lampepfl/dotty")),
-     licenses += ("BSD New",
-       url("https://github.com/lampepfl/dotty/blob/master/LICENSE.md")),
-     scmInfo := Some(
-       ScmInfo(
-         url("https://github.com/lampepfl/dotty"),
-         "scm:git:git@github.com:lampepfl/dotty.git"
-       )
-     ),
-     pomExtra := (
-       <developers>
-         <developer>
-           <id>odersky</id>
-           <name>Martin Odersky</name>
-           <email>martin.odersky@epfl.ch</email>
-           <url>https://github.com/odersky</url>
-         </developer>
-         <developer>
-           <id>DarkDimius</id>
-           <name>Dmitry Petrashko</name>
-           <email>me@d-d.me</email>
-           <url>https://d-d.me</url>
-         </developer>
-         <developer>
-           <id>smarter</id>
-           <name>Guillaume Martres</name>
-           <email>smarter@ubuntu.com</email>
-           <url>http://guillaume.martres.me</url>
-         </developer>
-         <developer>
-           <id>felixmulder</id>
-           <name>Felix Mulder</name>
-           <email>felix.mulder@gmail.com</email>
-           <url>http://felixmulder.com</url>
-         </developer>
-         <developer>
-           <id>liufengyun</id>
-           <name>Liu Fengyun</name>
-           <email>liufengyun@chaos-lab.com</email>
-           <url>http://chaos-lab.com</url>
-         </developer>
-       </developers>
-     )
-   )
+  lazy val publishing = Seq(
+    publishMavenStyle := true,
+    publishArtifact := true,
+    isSnapshot := version.value.contains("SNAPSHOT"),
+    publishTo := {
+      val nexus = "https://oss.sonatype.org/"
+      if (isSnapshot.value)
+        Some("snapshots" at nexus + "content/repositories/snapshots")
+      else
+        Some("releases"  at nexus + "service/local/staging/deploy/maven2")
+    },
+    publishArtifact in Test := false,
+    homepage := Some(url("https://github.com/lampepfl/dotty")),
+    licenses += ("BSD New",
+      url("https://github.com/lampepfl/dotty/blob/master/LICENSE.md")),
+    scmInfo := Some(
+      ScmInfo(
+        url("https://github.com/lampepfl/dotty"),
+        "scm:git:git@github.com:lampepfl/dotty.git"
+      )
+    ),
+    pomExtra := (
+      <developers>
+        <developer>
+          <id>odersky</id>
+          <name>Martin Odersky</name>
+          <email>martin.odersky@epfl.ch</email>
+          <url>https://github.com/odersky</url>
+        </developer>
+        <developer>
+          <id>DarkDimius</id>
+          <name>Dmitry Petrashko</name>
+          <email>me@d-d.me</email>
+          <url>https://d-d.me</url>
+        </developer>
+        <developer>
+          <id>smarter</id>
+          <name>Guillaume Martres</name>
+          <email>smarter@ubuntu.com</email>
+          <url>http://guillaume.martres.me</url>
+        </developer>
+        <developer>
+          <id>felixmulder</id>
+          <name>Felix Mulder</name>
+          <email>felix.mulder@gmail.com</email>
+          <url>http://felixmulder.com</url>
+        </developer>
+        <developer>
+          <id>liufengyun</id>
+          <name>Liu Fengyun</name>
+          <email>liufengyun@chaos-lab.com</email>
+          <url>http://chaos-lab.com</url>
+        </developer>
+      </developers>
+      )
+  )
 
   // Partest tasks
   lazy val lockPartestFile = TaskKey[Unit]("lockPartestFile", "Creates the lock file at ./tests/locks/partest-<pid>.lock")
@@ -460,10 +460,10 @@ object DottyInjectedPlugin extends AutoPlugin {
         // Compile
 
         val cachedCompile = FileFunction.cached(cacheDir / "compile",
-            FilesInfo.lastModified, FilesInfo.exists) { dependencies =>
+          FilesInfo.lastModified, FilesInfo.exists) { dependencies =>
 
           logger.info(
-              "Compiling %d Scala sources to %s..." format (
+            "Compiling %d Scala sources to %s..." format (
               sources.size, classesDirectory))
 
           if (classesDirectory.exists)
@@ -481,7 +481,7 @@ object DottyInjectedPlugin extends AutoPlugin {
             def log(level: Level.Value, message: => String) = {
               val msg = message
               if (level != Level.Info ||
-                  !msg.startsWith("Running dotty.tools.dotc.Main"))
+                !msg.startsWith("Running dotty.tools.dotc.Main"))
                 logger.log(level, msg)
             }
             def success(message: => String) = logger.success(message)
@@ -490,14 +490,6 @@ object DottyInjectedPlugin extends AutoPlugin {
 
           def doCompile(sourcesArgs: List[String]): Unit = {
             val run = (runner in compile).value
-            println("CLASSPATH")
-            println(compilerCp.mkString(":"))
-            println("CP STR")
-            val caca = "-classpath" :: cpStr ::
-              "-d" :: classesDirectory.getAbsolutePath() ::
-              options ++:
-                sourcesArgs
-            println(caca.mkString(" "))
             run.run("dotty.tools.dotc.Main", compilerCp,
               "-classpath" :: cpStr ::
                 "-d" :: classesDirectory.getAbsolutePath() ::
@@ -510,7 +502,7 @@ object DottyInjectedPlugin extends AutoPlugin {
           val isWindows =
             System.getProperty("os.name").toLowerCase().indexOf("win") >= 0
           if ((fork in compile).value && isWindows &&
-              (sourcesArgs.map(_.length).sum > 1536)) {
+            (sourcesArgs.map(_.length).sum > 1536)) {
             IO.withTemporaryFile("sourcesargs", ".txt") { sourceListFile =>
               IO.writeLines(sourceListFile, sourcesArgs)
               doCompile(List("@"+sourceListFile.getAbsolutePath()))
