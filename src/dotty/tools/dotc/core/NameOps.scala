@@ -78,6 +78,7 @@ object NameOps {
     def isFieldName = name endsWith LOCAL_SUFFIX
     def isShadowedName = name.length > 0 && name.head == '(' && name.startsWith(nme.SHADOWED)
     def isDefaultGetterName = name.isTermName && name.asTermName.defaultGetterIndex >= 0
+    def isProductAccessorName = name.isTermName && name.head == '_' && name.tail.forall(Character.isDigit)
     def isScala2LocalSuffix = name.endsWith(" ")
     def isModuleVarName(name: Name): Boolean =
       name.stripAnonNumberSuffix endsWith MODULE_VAR_SUFFIX

@@ -619,6 +619,16 @@ object Summaries {
 }
 
 class BuildCallGraph extends Phase {
+  private var reachableMethods: Set[CallWithContext] = null
+  private var reachableTypes: Set[TypeWithContext] = null
+  private var casts: Set[Cast] = null
+  private var outerMethods: Set[Symbol] = null
+
+  def getReachableMethods = reachableMethods
+  def getReachableTypes   = reachableTypes
+  def getReachableCasts   = casts
+  def getOuterMethods     = outerMethods
+
   import tpd._
   def phaseName: String = "callGraph"
   def isEntryPoint(s: Symbol)(implicit ctx: Context): Boolean = {
@@ -687,7 +697,7 @@ class BuildCallGraph extends Phase {
 
   /**
     * @param mode see modes above
-    * @param specLimit how many specializations symbol can have xam
+    * @param specLimit how many specializations symbol can have max
     * @return (reachableMethods, reachableTypes, casts, outerMethod)
     */
   def buildCallGraph(mode: Int, specLimit: Int)(implicit ctx: Context): (Set[CallWithContext], Set[TypeWithContext], Set[Cast], Set[Symbol]) = {
@@ -920,9 +930,9 @@ class BuildCallGraph extends Phase {
           val to = propagateTargs(targs.head)
           addCast(from, to)
           Nil
-        case _ if defn.ObjectMethods.contains(calleeSymbol) || defn.AnyMethods.contains(calleeSymbol) =>
-          // TODO: only for paper
-          Nil
+//        case _ if defn.ObjectMethods.contains(calleeSymbol) || defn.AnyMethods.contains(calleeSymbol) =>
+//          // TODO: only for paper
+//          Nil
         case NoPrefix =>  // inner method
           assert(callee.call.termSymbol.owner.is(Method) || callee.call.termSymbol.owner.isLocalDummy)
           new CallWithContext(TermRef.withFixedSym(caller.call.normalizedPrefix, calleeSymbol.name, calleeSymbol), targs, args, outerTargs, caller, callee) :: Nil
@@ -1002,12 +1012,18 @@ class BuildCallGraph extends Phase {
             currentThis = currentThis.normalizedPrefix
             currentOwner = currentOwner.owner.enclosingClass
           }
+          if (currentThis.derivesFrom(thisType.cls)) {
+            val fullThisType = AndType.apply(currentThis, thisType.tref)
+            if (calleeSymbol.is(Private))
+              new CallWithContext(TermRef.withFixedSym(currentThis, calleeSymbol.name, calleeSymbol), targs, args, outerTargs, caller, callee) :: Nil
+            else dispatchCalls(propagateTargs(fullThisType))
+          } else {
+            dispatchCalls(propagateTargs(receiver.widenDealias))
+          }
+
           // todo: handle calls on this of outer classes
 
-          val fullThisType = AndType.apply(currentThis, thisType.tref)
-          if (calleeSymbol.is(Private))
-            new CallWithContext(TermRef.withFixedSym(currentThis, calleeSymbol.name, calleeSymbol), targs, args, outerTargs, caller, callee) :: Nil
-          else dispatchCalls(propagateTargs(fullThisType))
+
         case _: PreciseType =>
           dispatchCalls(propagateTargs(receiver))
         case _: ClosureType =>
@@ -1133,22 +1149,53 @@ class BuildCallGraph extends Phase {
 
     def escape(s: String) = s.replace("\\", "\\\\").replace("\"","\\\"")
 
+    def fullNameSeparated(symbol: Symbol)(separator: String)(implicit ctx: Context): Name = {
+      var sep = separator
+      val owner = symbol.owner
+      var name: Name = symbol.name
+      var stopAtPackage = false
+      if (sep.isEmpty) {
+        sep = "$"
+        stopAtPackage = true
+      }
+      if (symbol.isAnonymousClass || symbol.isAnonymousFunction)
+         name = name ++ symbol.id.toString
+      if (symbol == NoSymbol ||
+        owner == NoSymbol ||
+        owner.isEffectiveRoot ||
+        stopAtPackage && owner.is(PackageClass)) name
+      else {
+        var encl = owner
+        while (!encl.isClass && !encl.isPackageObject) {
+          encl = encl.owner
+          sep += "~"
+        }
+        if (owner.is(ModuleClass, butNot = Package) && sep == "$") sep = "" // duplicate scalac's behavior: don't write a double '$$' for module class members.
+        val fn = fullNameSeparated(encl)(separator) ++ sep ++ name
+        if (symbol.isType) fn.toTypeName else fn.toTermName
+      }
+    }
+
+    def symbolName(s: Symbol): String = {
+      escape(fullNameSeparated(s)(".").show)
+    }
+
     def typeName(x: Type): String = {
       x match {
         case ConstantType(value) => s"${escape(value.toString)}"
         case _ =>
           val t = x.termSymbol.orElse(x.typeSymbol)
           if (t.exists)
-            escape(t.name.toString)
+            symbolName(t)
           else escape(x.show)
       }
     }
 
     def csWTToName(x: CallWithContext, close: Boolean = true, open: Boolean = true): String = {
       if (x.call.termSymbol.owner == x.call.normalizedPrefix.classSymbol) {
-        s"${if (open) slash else ""}${escape(x.call.normalizedPrefix.show)}${if (x.targs.nonEmpty) "[" + x.targs.map(x => typeName(x)).mkString(",") + "]" else ""}${if (close) slash else ""}"
+        s"${if (open) slash else ""}${typeName(x.call)}${if (x.targs.nonEmpty) "[" + x.targs.map(x => typeName(x)).mkString(",") + "]" else ""}${if (close) slash else ""}"
       } else {
-        s"${if (open) slash else ""}${escape(x.call.normalizedPrefix.show)}.super.${escape(x.call.termSymbol.showFullName)}${if (x.targs.nonEmpty) "[" + x.targs.map(x => typeName(x)).mkString(",") + "]" else ""}${if (close) slash else ""}"
+        s"${if (open) slash else ""}${typeName(x.call.normalizedPrefix)}.super.${symbolName(x.call.termSymbol)}${if (x.targs.nonEmpty) "[" + x.targs.map(x => typeName(x)).mkString(",") + "]" else ""}${if (close) slash else ""}"
       }
     }
 
@@ -1276,9 +1323,10 @@ class BuildCallGraph extends Phase {
       //val g2 = buildCallGraph(AnalyseTypes, specLimit)
 
       println(s"\n\t\t\tType & Arg flow analisys")
-      val (reachableMethods, reachableTypes, casts, outerMethod) = buildCallGraph(AnalyseArgs, specLimit)
-      val g3 = outputGraph(AnalyseArgs, specLimit)(reachableMethods, reachableTypes, casts, outerMethod)
-      sendSpecializationRequests(reachableMethods, reachableTypes, casts, outerMethod)
+      val cg = buildCallGraph(AnalyseArgs, specLimit)
+      reachableMethods = cg._1; reachableTypes = cg._2; casts = cg._3; outerMethods = cg._4
+      val g3 = outputGraph(AnalyseArgs, specLimit)(reachableMethods, reachableTypes, casts, outerMethods)
+      sendSpecializationRequests(reachableMethods, reachableTypes, casts, outerMethods)
 
       def printToFile(f: java.io.File)(op: java.io.PrintWriter => Unit): Unit = {
         val p = new java.io.PrintWriter(f)
