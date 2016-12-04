@@ -93,8 +93,11 @@ class OuterSpecializer extends MiniPhaseTransform  with InfoTransformer {
     }
   }
 
+  def enabled(implicit ctx: Context) =
+    ctx.settings.lto.value.contains("spec") || ctx.settings.lto.value.contains("all")
+
   override def prepareForUnit(tree: tpd.Tree)(implicit ctx: Context): TreeTransform = {
-    if (ctx.settings.lto.value.contains("spec") || ctx.settings.lto.value.contains("all")) this
+    if (enabled) this
     else TreeTransforms.NoTransform
   }
 
@@ -176,6 +179,7 @@ class OuterSpecializer extends MiniPhaseTransform  with InfoTransformer {
   }
 
   override def transform(ref: SingleDenotation)(implicit ctx: Context): SingleDenotation = {
+    if (!enabled) return ref
     val n = super.transform(ref)
     if (n.symbol.isClass && requestedSpecialization(n.symbol)) {
       val sd = n.asInstanceOf[SymDenotation]

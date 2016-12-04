@@ -15,7 +15,7 @@ import transform.TreeTransforms.{TreeTransform, TreeTransformer}
 import core.DenotTransformers.DenotTransformer
 import core.Denotations.SingleDenotation
 import dotty.tools.backend.jvm.{GenBCode, LabelDefs}
-import dotty.tools.dotc.transform.linker.Rewrites
+import dotty.tools.dotc.transform.linker.{AnalyzeClosures, Simplify, MinimizeClosures, Rewrites}
 
 class Compiler {
 
@@ -41,9 +41,10 @@ class Compiler {
       List(new PostTyper),
       //      List(new Replace),
       List(new Pickler),
-      List(new ExpandPrivate),
+      //List(new ExpandPrivate),
       List(new CollectSummaries),
-      List(new BuildCallGraph),
+//      List(new BuildCallGraph),
+//      List(new AnalyzeClosures),
       List(new FirstTransform,
            new CheckReentrant),
       List(new PreSpecializer,
@@ -61,17 +62,19 @@ class Compiler {
            new CrossCastAnd,
            new Splitter),
       //List(new TypeSpecializer),
-      List(new OuterSpecializer),
-      List(new OuterSpecializeParents),
+//      List(new OuterSpecializer),
+//      List(new OuterSpecializeParents),
       List(new VCInlineMethods,
            new SeqLiterals,
            new InterceptedMethods,
            new Getters,
            new ClassTags,
            new ElimByName,
+           new ElimCommonSubexpression,
            new AugmentScala2Traits,
            new ResolveSuper,
-           new Rewrites),
+           new Simplify/*,
+           new Rewrites*/),
       List(new Erasure),
       List(new ElimErasedValueType,
            new VCElideAllocations,
@@ -91,6 +94,7 @@ class Compiler {
            new RestoreScopes),
       List(/*new PrivateToStatic,*/
            // new PrintMethodSignatures,
+           // new MinimizeClosures,
            new CollectEntryPoints,
            new LabelDefs),
       List(new GenBCode)

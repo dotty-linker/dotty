@@ -178,7 +178,7 @@ class TreeChecker extends Phase with SymTransformer {
       vparamss.foldRightBN(op)(withDefinedSyms(_)(_))
 
     def assertDefined(tree: untpd.Tree)(implicit ctx: Context) =
-      if (tree.symbol.maybeOwner.isTerm)
+      if (tree.symbol.maybeOwner.isTerm && !(labelsReordered && tree.symbol.is(Label)))
         assert(nowDefinedSyms contains tree.symbol, i"undefined symbol ${tree.symbol}")
 
     override def typedUnadapted(tree: untpd.Tree, pt: Type)(implicit ctx: Context): tpd.Tree = {
